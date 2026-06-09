@@ -220,22 +220,27 @@ class Startup:
             return
         if ctx.splash:
             update_splash(ctx.splash, "Checking services…")
-        try:
-            from dmelogic.paths import get_project_root
-            from dmelogic.services.nova_background import ensure_nova_background_services
-            from dmelogic.services.nova_wake_listener import ensure_nova_wake_listener
 
-            with timed_step("nova_background_services"):
-                ensure_nova_background_services(
-                    get_project_root(),
-                    enabled=ctx.config.nova.ensure_background_services,
-                )
-            with timed_step("nova_wake_listener"):
-                ensure_nova_wake_listener(
-                    enabled=ctx.config.nova.wake_listener_enabled,
-                )
-        except Exception as e:
-            logger.warning(f"Nova background host check failed: {e}")
+        from dmelogic.features import nova_enabled
+        if nova_enabled(ctx.config):
+            try:
+                from dmelogic.paths import get_project_root
+                from dmelogic.services.nova_background import ensure_nova_background_services
+                from dmelogic.services.nova_wake_listener import ensure_nova_wake_listener
+
+                with timed_step("nova_background_services"):
+                    ensure_nova_background_services(
+                        get_project_root(),
+                        enabled=ctx.config.nova.ensure_background_services,
+                    )
+                with timed_step("nova_wake_listener"):
+                    ensure_nova_wake_listener(
+                        enabled=ctx.config.nova.wake_listener_enabled,
+                    )
+            except Exception as e:
+                logger.warning(f"Nova background host check failed: {e}")
+        else:
+            logger.info("Nova subsystem disabled (Nova-less edition or [nova] enabled=false)")
 
         try:
             from dmelogic.services.service_manager import (

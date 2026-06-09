@@ -64,6 +64,10 @@ class TelemetryConfig:
 
 @dataclass(frozen=True)
 class NovaConfig:
+    # Master switch for the entire Nova AI subsystem. Set False (or ship the
+    # Nova-less edition) to disable the assistant, background host, wake
+    # listener, RingCentral, and the agent-order intake in one place.
+    enabled: bool = True
     ensure_background_services: bool = True
     wake_listener_enabled: bool = True
 
