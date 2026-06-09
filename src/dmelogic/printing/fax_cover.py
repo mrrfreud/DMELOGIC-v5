@@ -8,17 +8,11 @@ from typing import Optional, Union
 
 PagePath = Union[str, Path]
 
-HEADER_TITLE = "1st Aid Pharmacy & Surgical Supplies"
-HEADER_SUBTITLE = "Durable Medical Equipment Department"
-COMPANY_ADDRESS = "23 W Fordham Road, Bronx, NY 10468"
-COMPANY_CONTACT = "Tel. (347) 647-2347 | Fax. 347-947-8102"
-COMPANY_EMAIL = "melvin.ramirez@1staidpharmacy.net"
-SIGNATURE_BLOCK = (
-    "Melvin Ramirez | DME Operations Manager\n"
-    "23 W Fordham Road, Bronx, NY 10468\n"
-    "Tel. (347) 647-2347 / Fax. 347-947-8102\n"
-    "melvin.ramirez@1staidpharmacy.net"
-)
+# Company details come from the configured company profile (set in onboarding
+# or Settings). These generic fallbacks are used only if the profile is empty.
+_FALLBACK_TITLE = "Your Company Name"
+_FALLBACK_SUBTITLE = "Durable Medical Equipment"
+
 CONFIDENTIALITY_NOTICE = (
     "CONFIDENTIALITY NOTICE: This faxed message, including any attachments, is for the sole use of the "
     "intended recipient(s) and may contain confidential and privileged information, including Protected "
@@ -84,18 +78,40 @@ def generate_fax_cover_page(
     usable_width = right_margin - left_margin
     current_y = height - 0.75 * inch
 
-    # ── Company header ──────────────────────────────────────────────
+    # ── Company header (from the configured company profile) ────────
+    from dmelogic.company import load_company_profile
+    company = load_company_profile()
+
+    # Optional logo, drawn centered above the name.
+    if company.has_logo():
+        try:
+            from reportlab.lib.utils import ImageReader
+            logo = ImageReader(company.logo_path)
+            iw, ih = logo.getSize()
+            max_h = 0.6 * inch
+            disp_h = min(max_h, ih)
+            disp_w = iw * (disp_h / ih)
+            pdf.drawImage(logo, (width - disp_w) / 2, current_y - disp_h,
+                          width=disp_w, height=disp_h, mask="auto",
+                          preserveAspectRatio=True)
+            current_y -= disp_h + 0.12 * inch
+        except Exception:
+            pass
+
     pdf.setFont("Helvetica-Bold", 16)
-    pdf.drawCentredString(width / 2, current_y, HEADER_TITLE)
+    pdf.drawCentredString(width / 2, current_y, company.name or _FALLBACK_TITLE)
     current_y -= 0.22 * inch
     pdf.setFont("Helvetica", 10)
-    pdf.drawCentredString(width / 2, current_y, HEADER_SUBTITLE)
-    current_y -= 0.18 * inch
-    pdf.drawCentredString(width / 2, current_y, COMPANY_ADDRESS)
-    current_y -= 0.18 * inch
-    pdf.drawCentredString(width / 2, current_y, COMPANY_CONTACT)
-    current_y -= 0.18 * inch
-    pdf.drawCentredString(width / 2, current_y, COMPANY_EMAIL)
+    pdf.drawCentredString(width / 2, current_y, company.subtitle or _FALLBACK_SUBTITLE)
+    if company.full_address():
+        current_y -= 0.18 * inch
+        pdf.drawCentredString(width / 2, current_y, company.full_address())
+    if company.contact_line():
+        current_y -= 0.18 * inch
+        pdf.drawCentredString(width / 2, current_y, company.contact_line())
+    if company.email.strip():
+        current_y -= 0.18 * inch
+        pdf.drawCentredString(width / 2, current_y, company.email.strip())
 
     # ── Divider ─────────────────────────────────────────────────────
     current_y -= 0.2 * inch
@@ -157,9 +173,9 @@ def generate_fax_cover_page(
     )
     current_y -= 0.35 * inch
 
-    # ── Signature ───────────────────────────────────────────────────
+    # ── Signature (from the company profile) ────────────────────────
     pdf.setFont("Helvetica", 10)
-    for line in SIGNATURE_BLOCK.splitlines():
+    for line in company.signature_block().splitlines():
         pdf.drawString(left_margin, current_y, line)
         current_y -= 0.18 * inch
 

@@ -412,6 +412,19 @@ def main() -> int:
         def _post_window_setup(self, ctx: StartupContext, win) -> None:
             super()._post_window_setup(ctx, win)
 
+            # First-run onboarding: if no company profile is configured yet,
+            # collect the business details (skippable) so forms/faxes are
+            # branded. Editable later via Settings → Company Profile.
+            try:
+                from dmelogic.company import is_configured
+                if not is_configured():
+                    from dmelogic.ui.company_profile_dialog import CompanyProfileDialog
+                    CompanyProfileDialog(win, onboarding=True).exec()
+            except Exception as e:
+                import logging
+                logging.getLogger("onboarding").warning(
+                    f"Company onboarding skipped: {e}")
+
             # Allow Nova/API to request opening selected UI screens in the live app.
             _install_agent_ui_command_bridge(win)
 
