@@ -43,12 +43,27 @@ def _env_override() -> bool | None:
 def nova_enabled(config: Any | None = None) -> bool:
     """Resolve whether the Nova subsystem should run.
 
-    Pass the loaded ``Config`` to honor its ``[nova] enabled`` flag; when no
-    config is provided, fall back to the environment and dependency check.
+    Order of precedence:
+      1. ``DMELOGIC_NOVA`` env override (explicit on/off).
+      2. The **preview** edition defaults Nova OFF, so a side-by-side install
+         never starts Nova processes/ports/Startup entries that could collide
+         with another installed build. (Opt back in with ``DMELOGIC_NOVA=1``.)
+      3. The ``[nova] enabled`` config flag (release default: on).
+    Always gated by whether Nova's optional deps are importable.
     """
+    if not NOVA_DEPENDENCIES_AVAILABLE:
+        return False
+
     override = _env_override()
     if override is not None:
-        return override and NOVA_DEPENDENCIES_AVAILABLE
+        return override
+
+    try:
+        from dmelogic.identity import is_preview
+        if is_preview():
+            return False
+    except Exception:
+        pass
 
     config_enabled = True
     if config is not None:
@@ -56,5 +71,4 @@ def nova_enabled(config: Any | None = None) -> bool:
             config_enabled = bool(config.nova.enabled)
         except Exception:
             config_enabled = True
-
-    return config_enabled and NOVA_DEPENDENCIES_AVAILABLE
+    return config_enabled
