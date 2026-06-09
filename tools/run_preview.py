@@ -21,7 +21,9 @@ sys.path = [p for p in sys.path if p.rstrip("\\").lower() != r"c:\dmelogic main"
 SRC = r"C:\DMELOGIC-v5\src"
 sys.path.insert(0, SRC)
 
-# 2. Isolated, disposable data root — separate from the live build.
+# 2. "DMELogic 5" coexistence identity (separate name/folders/locks).
+os.environ.setdefault("DMELOGIC_EDITION", "preview")
+# Isolated, disposable data root — separate from the live build.
 os.environ.setdefault("DMELOGIC_DATA_DIR", r"C:\DMELogicV5_Preview")
 
 # 3. Launch.

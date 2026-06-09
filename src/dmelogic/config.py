@@ -19,7 +19,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-APP_NAME = "DMELogic"
+from dmelogic.identity import APP_NAME, DATA_FOLDER
 
 TESSERACT_PATHS = [
     r"C:\Program Files\Tesseract-OCR\tesseract.exe",
@@ -36,10 +36,10 @@ def _platform_default_data_root() -> Path:
     """Per-machine writable data root, separate from the install directory."""
     if os.name == "nt":
         base = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
-        return Path(base) / APP_NAME
+        return Path(base) / DATA_FOLDER
     xdg = os.environ.get("XDG_DATA_HOME")
     base = Path(xdg) if xdg else Path.home() / ".local" / "share"
-    return base / APP_NAME
+    return base / DATA_FOLDER
 
 
 def data_root() -> Path:
@@ -72,7 +72,7 @@ def data_root() -> Path:
         candidate.mkdir(parents=True, exist_ok=True)
     except Exception:
         # Last-resort fallback so the app can still start.
-        candidate = Path.home() / APP_NAME
+        candidate = Path.home() / DATA_FOLDER
         candidate.mkdir(parents=True, exist_ok=True)
     return candidate
 
@@ -86,7 +86,7 @@ def data_subdir(name: str) -> Path:
 
 def _settings_file_path() -> Path:
     """settings.json location — kept in the data root (single source of truth)."""
-    root = os.environ.get("DMELOGIC_DATA_DIR") or os.environ.get("PROGRAMDATA", r"C:\ProgramData") + "\\" + APP_NAME
+    root = os.environ.get("DMELOGIC_DATA_DIR") or os.environ.get("PROGRAMDATA", r"C:\ProgramData") + "\\" + DATA_FOLDER
     p = Path(root)
     try:
         p.mkdir(parents=True, exist_ok=True)

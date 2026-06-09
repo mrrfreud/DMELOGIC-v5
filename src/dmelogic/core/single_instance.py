@@ -19,8 +19,15 @@ from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 
 logger = logging.getLogger("single_instance")
 
-_SERVER_NAME = "dmelogic-singleinstance-v1"
-_LOCK_PATH = Path(tempfile.gettempdir()) / "dmelogic.lock"
+# Identity-scoped names so a parallel edition (e.g. "DMELogic 5") never
+# collides with another installed build's lock/socket.
+try:
+    from dmelogic.identity import APP_ID as _APP_ID
+except Exception:
+    _APP_ID = "DMELogic"
+
+_SERVER_NAME = f"{_APP_ID.lower()}-singleinstance-v1"
+_LOCK_PATH = Path(tempfile.gettempdir()) / f"{_APP_ID.lower()}.lock"
 
 
 def acquire_or_signal(on_raise_requested) -> tuple[bool, QLockFile, QLocalServer | None]:

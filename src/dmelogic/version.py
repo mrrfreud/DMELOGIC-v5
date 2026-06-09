@@ -3,10 +3,9 @@ version.py — Application identity and version.
 Single source of truth for the product name and version number.
 """
 
-# Product identity (user-facing).
-APP_NAME = "DMELogic"
-APP_TITLE = "DMELogic with Nova"
-APP_PUBLISHER = "DMELogic"
+# Product identity (user-facing). Derived from the single identity source so a
+# build can be re-skinned (e.g. "DMELogic 5" preview) via one flag.
+from dmelogic.identity import APP_NAME, APP_TITLE, APP_PUBLISHER, APP_ID  # noqa: F401
 
 # Application version - update this when releasing new versions.
 APP_VERSION = "5.0.0"

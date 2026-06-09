@@ -23,11 +23,36 @@ dependencies and bundled assets/theme.
 
 ## 2. Compile the installer
 
+**Shipping release** ("DMELogic", for a new company):
 ```powershell
 iscc installer\DMELogic.iss
 ```
+→ `installer\Output\DMELogic_Setup_5.0.0.exe`
 
-The signed-ready setup lands in `installer\Output\DMELogic_Setup_5.0.0.exe`.
+**Coexistence preview** ("DMELogic 5", installs side-by-side with an existing
+DMELogic without conflict):
+```powershell
+iscc /DEdition=preview installer\DMELogic.iss
+```
+→ `installer\Output\DMELogic5_Setup_5.0.0.exe`
+
+## Editions (one flag, no fork)
+
+`src/dmelogic/identity.py` is the single source of truth. The `release` and
+`preview` editions differ in every installed identifier so two builds never
+collide:
+
+| | release | preview |
+|---|---|---|
+| Name | DMELogic | DMELogic 5 |
+| Install dir | `Program Files\DMELogic` | `Program Files\DMELogic 5` |
+| Data root | `ProgramData\DMELogic` | `ProgramData\DMELogic5` |
+| Single-instance lock | `dmelogic-…` | `dmelogic5-…` |
+| Nova Startup entry | `DMELogic_NovaWakeListener.cmd` | `DMELogic5_NovaWakeListener.cmd` |
+| Installer AppId | (release GUID) | (distinct GUID) |
+
+The preview installer drops an `edition.txt` next to the exe so the installed
+build resolves its identity without any shared machine env var.
 
 ## What the installer does
 

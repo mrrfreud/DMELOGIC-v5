@@ -8,7 +8,14 @@ import subprocess
 from pathlib import Path
 
 logger = logging.getLogger("nova_wake_listener")
-STARTUP_LAUNCHER_NAME = "DMELogic_NovaWakeListener.cmd"
+
+# Identity-scoped so a parallel edition's Startup entry never overwrites another
+# installed build's (e.g. "DMELogic5_NovaWakeListener.cmd" vs the release name).
+try:
+    from dmelogic.identity import APP_ID as _APP_ID
+except Exception:
+    _APP_ID = "DMELogic"
+STARTUP_LAUNCHER_NAME = f"{_APP_ID}_NovaWakeListener.cmd"
 
 
 def _wake_script_path() -> Path:

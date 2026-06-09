@@ -19,6 +19,7 @@ sys.meta_path = [
 sys.path = [p for p in sys.path if p.rstrip("\\").lower() != r"c:\dmelogic main"]
 sys.path.insert(0, r"C:\DMELOGIC-v5\src")
 
+os.environ.setdefault("DMELOGIC_EDITION", "preview")
 os.environ.setdefault("DMELOGIC_DATA_DIR", r"C:\DMELogicV5_Preview")
 
 
