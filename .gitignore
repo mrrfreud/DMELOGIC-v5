@@ -35,6 +35,10 @@ Exports/
 *.log
 frozen_test*.log
 
+# Runtime files the app may write into the working dir when run from source
+/settings.json
+/src/assets/
+
 # Secrets / local config
 .env
 config.local.toml
