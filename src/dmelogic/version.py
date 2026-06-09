@@ -1,15 +1,30 @@
 """
-version.py — Application version information
-Single source of truth for version number.
+version.py — Application identity and version.
+Single source of truth for the product name and version number.
 """
 
-# Application version - update this when releasing new versions
-APP_VERSION = "2.0.24.513"
+# Product identity (user-facing).
+APP_NAME = "DMELogic"
+APP_TITLE = "DMELogic with Nova"
+APP_PUBLISHER = "DMELogic"
 
-# GitHub repository for update checks
-GITHUB_REPO = "mrrfreud/DMELogic-Refactored"
+# Application version - update this when releasing new versions.
+APP_VERSION = "5.0.0"
+
+# GitHub repository for update checks.
+GITHUB_REPO = "mrrfreud/DMELOGIC-v5"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
+
+
+def get_app_name() -> str:
+    """User-facing product name."""
+    return APP_NAME
+
+
+def get_app_title() -> str:
+    """Full product title including the Nova assistant branding."""
+    return APP_TITLE
 
 
 def get_version() -> str:

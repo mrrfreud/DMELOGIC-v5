@@ -120,8 +120,8 @@ class WelcomePage(QWizardPage):
             "<ul>"
             "<li><b>Database Folder</b> — Patient &amp; order databases<br>"
             "<code style='color:#0d9488;'>Example: \\\\SERVER-PC\\DMELogic\\Data</code></li>"
-            "<li><b>Fax Documents Folder</b> — Scanned/faxed PDFs<br>"
-            "<code style='color:#0d9488;'>Example: \\\\SERVER-PC\\FaxManagerData</code></li>"
+            "<li><b>Scanned Documents Folder</b> — Scanned/faxed PDFs<br>"
+            "<code style='color:#0d9488;'>Example: \\\\SERVER-PC\\DMELogic\\Scans</code></li>"
             "<li><b>Backup Folder</b> — Automatic backups (server only, optional here)</li>"
             "</ul>"
             "<p style='color:#d97706;'><b>Important:</b> All workstations must point to the <b>same shared folders</b> "
@@ -288,10 +288,10 @@ class FaxFolderPage(QWizardPage):
         info_label = QLabel(
             "<p>This folder contains the scanned/faxed documents (PDFs) organized by date.</p>"
             "<p>DMELogic will browse these documents to link them to patient orders.</p>"
-            "<p><b>Network workstation:</b> Browse to the shared fax folder on your server:<br>"
-            "<code style='color:#0d9488;'>\\\\SERVER-PC\\FaxManagerData</code></p>"
+            "<p><b>Network workstation:</b> Browse to the shared scans folder on your server:<br>"
+            "<code style='color:#0d9488;'>\\\\SERVER-PC\\DMELogic\\Scans</code></p>"
             "<p><b>Server PC (standalone):</b> Use the local path:<br>"
-            "<code style='color:#0d9488;'>C:\\Users\\pharmacy\\Documents\\FaxManagerData</code></p>"
+            "<code style='color:#0d9488;'>C:\\ProgramData\\DMELogic\\Scans</code></p>"
         )
         info_label.setWordWrap(True)
         info_label.setTextFormat(Qt.TextFormat.RichText)

@@ -10442,11 +10442,13 @@ class PDFViewer(QMainWindow):
     def __init__(self):
         super().__init__()
         try:
-            from dmelogic.version import APP_VERSION
+            from dmelogic.version import APP_VERSION, APP_TITLE
             build = APP_VERSION
+            app_title = APP_TITLE
         except Exception:
             build = "unknown"
-        self.setWindowTitle(f"DMELogic v2.0 (Build {build}) - Complete DME Software Solution")
+            app_title = "DMELogic with Nova"
+        self.setWindowTitle(f"{app_title}  —  v{build}")
         # Size the window to fill the available screen
         from PyQt6.QtWidgets import QApplication
         screen = QApplication.primaryScreen()
