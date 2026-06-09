@@ -79,8 +79,16 @@ except ImportError:
     urllib = None
 
 # --- CONFIGURATION ---
-# Default folder path - can be changed via menu
-DEFAULT_FOLDER_PATH = r"C:\Users\pharmacy\Documents\FaxManagerData\Faxes OCR'd"
+# Default folder path. v5: derive from the canonical data root (…/Scans) so the
+# legacy viewer never reaches into a developer's live FaxManagerData folder.
+try:
+    from dmelogic.paths import ocr_folder as _ocr_folder
+    DEFAULT_FOLDER_PATH = str(_ocr_folder())
+except Exception:
+    import os as _os
+    DEFAULT_FOLDER_PATH = _os.path.join(
+        _os.environ.get("PROGRAMDATA", r"C:\ProgramData"), "DMELogic", "Scans"
+    )
 
 # Tesseract OCR configuration
 # Common Tesseract installation paths on Windows
@@ -11556,6 +11564,18 @@ class PDFViewer(QMainWindow):
 
         # Add document viewer tab to main tabs
         self.main_tabs.addTab(doc_tab, "Document Viewer")
+
+        # v5: the New Rx triage screen replaces the legacy document viewer as the
+        # front door. We keep the legacy widget (other code references its
+        # attributes) but hide its tab and surface the modern triage screen.
+        try:
+            from dmelogic.triage.ui.triage_widget import TriageWidget
+            self._new_rx_tab = TriageWidget()
+            doc_idx = self.main_tabs.indexOf(doc_tab)
+            self.main_tabs.insertTab(doc_idx, self._new_rx_tab, "New Rx")
+            self.main_tabs.setTabVisible(self.main_tabs.indexOf(doc_tab), False)
+        except Exception as _e:
+            debug_log(f"Could not add New Rx triage tab: {_e}")
 
         # === KEYBOARD SHORTCUTS FOR PRODUCTIVITY ===
         from PyQt6.QtGui import QShortcut, QKeySequence

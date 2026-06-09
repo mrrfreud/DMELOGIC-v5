@@ -28,16 +28,16 @@ class _Light:
     text = "#0f172a"        # slate-900
     text_muted = "#64748b"  # slate-500
     text_subtle = "#94a3b8" # slate-400
-    primary = "#0d9488"     # teal-600
-    primary_hover = "#0f766e"   # teal-700
-    primary_press = "#115e59"   # teal-800
-    primary_soft = "#ccfbf1"    # teal-100
-    primary_softer = "#f0fdfa"  # teal-50
+    primary = "#0f766e"     # teal-700 — deeper, more confident
+    primary_hover = "#115e59"   # teal-800
+    primary_press = "#134e4a"   # teal-900
+    primary_soft = "#e2e8f0"    # neutral slate-200 (de-pastel hovers)
+    primary_softer = "#f1f5f9"
     on_primary = "#ffffff"
     danger = "#dc2626"
     danger_hover = "#b91c1c"
-    selection = "#ccfbf1"
-    selection_text = "#0f172a"
+    selection = "#0f766e"       # solid teal selection
+    selection_text = "#ffffff"  # white text on selection
     disabled_bg = "#f1f5f9"
     disabled_text = "#94a3b8"
 
@@ -214,7 +214,7 @@ QListWidget, QListView {{
 }}
 QListWidget::item {{ padding: 7px 8px; border-radius: 6px; }}
 QListWidget::item:hover {{ background-color: {c.surface_alt}; }}
-QListWidget::item:selected {{ background-color: {c.primary_soft}; color: {c.text}; }}
+QListWidget::item:selected {{ background-color: {c.selection}; color: {c.selection_text}; }}
 
 /* ── Scrollbars ── */
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}

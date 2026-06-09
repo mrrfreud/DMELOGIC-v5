@@ -285,60 +285,19 @@ def resolve_db_path(filename: str, folder_path: Optional[str] = None) -> str:
             debug_log(f"DB: Using explicit folder_path: {dest_path}")
             return dest_path
 
-        # Get the configured db_folder (authoritative if set)
-        preferred_db_folder = _load_db_folder_preferred()
-        
-        if preferred_db_folder:
-            try:
-                os.makedirs(preferred_db_folder, exist_ok=True)
-            except Exception:
-                pass
-
-            dest_path = os.path.join(preferred_db_folder, filename)
-            
-            # If the DB already exists in the configured folder, USE IT.
-            # Do NOT search for "larger" databases elsewhere - this caused data inconsistencies.
-            if os.path.exists(dest_path):
-                debug_log(f"DB: Using configured db_folder: {dest_path}")
-                return dest_path
-            
-            # DB doesn't exist in configured folder yet - try to seed from elsewhere
-            existing = find_existing_db(filename, folder_path=folder_path)
-            if existing and os.path.abspath(existing) != os.path.abspath(dest_path):
-                try:
-                    shutil.copy2(existing, dest_path)
-                    debug_log(f"DB: Seeded {filename} from {existing} to {dest_path}")
-                except Exception as e:
-                    debug_log(f"DB: Failed to seed {filename}: {e}")
-                    # If copy fails, use the existing file
-                    return existing
-            
-            # Return the configured path (will be created on first write if needed)
-            return dest_path
-
-        # No db_folder configured - fall back to settings db_folder (legacy path)
-        db_folder = _load_db_folder_from_settings()
-        if db_folder:
-            try:
-                os.makedirs(db_folder, exist_ok=True)
-            except Exception:
-                pass
-
-            dest_path = os.path.join(db_folder, filename)
-            if os.path.exists(dest_path):
-                return dest_path
-            
-            existing = find_existing_db(filename, folder_path=folder_path)
-            if existing:
-                try:
-                    shutil.copy2(existing, dest_path)
-                except Exception:
-                    return existing
-            return dest_path
-
-        # No db_folder configured at all: use largest existing or app root
-        existing = find_existing_db(filename, folder_path=folder_path)
-        return existing or os.path.join(app_root, filename)
+        # Canonical data root: db_dir() (or an explicitly configured db_folder).
+        #
+        # v5: NO cross-folder discovery or seeding. The previous behavior
+        # searched other locations and COPIED a found database into the active
+        # data root — which leaked a separate (e.g. live) install's data into a
+        # fresh one. Databases are created empty in the data root on first use;
+        # migrating real data is explicit (configure db_folder, or CSV import).
+        target_folder = _load_db_folder_preferred() or app_root
+        try:
+            os.makedirs(target_folder, exist_ok=True)
+        except Exception:
+            pass
+        return os.path.join(target_folder, filename)
 
     except Exception as e:
         debug_log(f"DB: resolve_db_path fatal for {filename}: {e}")
