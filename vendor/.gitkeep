@@ -1,0 +1,2 @@
+# Place bundled third-party runtimes here (e.g. vendor/tesseract/).
+# Contents are git-ignored; the installer picks them up at build time.

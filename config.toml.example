@@ -1,0 +1,29 @@
+# DMELogic configuration (example).
+#
+# Copy to the data root as  C:\ProgramData\DMELogic\config.toml  and edit.
+# Every value is optional; omitted keys fall back to sensible defaults.
+
+pharmacy_name = "Central Pharmacy"
+pharmacy_logo_path = ""
+
+[theme]
+default = "light"          # "light", "dark", or "system"
+accent_color = "#F97316"
+follow_os_theme = true      # when true, the OS theme overrides `default`
+
+[session]
+idle_timeout_minutes = 15
+failed_login_lockout_attempts = 5
+failed_login_lockout_minutes = 10
+remember_window_geometry = true
+
+[backup]
+backup_before_migrations = true
+keep_last_n_backups = 7
+log_retention_days = 30
+
+[nova]
+# Master switch for the Nova AI subsystem. Set false for the Nova-less edition.
+enabled = true
+ensure_background_services = true
+wake_listener_enabled = true
