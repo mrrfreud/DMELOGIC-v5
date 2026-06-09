@@ -31,6 +31,10 @@ Logs/
 report_exports/
 Exports/
 
+# Build / run logs and test artifacts
+*.log
+frozen_test*.log
+
 # Secrets / local config
 .env
 config.local.toml
