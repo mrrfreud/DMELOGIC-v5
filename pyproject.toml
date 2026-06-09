@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dmelogic"
+version = "5.0.0"
+description = "DMELogic with Nova — DME pharmacy order management, billing, and AI assistance."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "DMELogic" }]
+
+dependencies = [
+    # GUI
+    "PyQt6>=6.4.0",
+    # PDF
+    "PyMuPDF>=1.23.0",
+    "reportlab>=4.0.0",
+    "PyPDF2>=3.0.0",
+    "openpyxl>=3.1.0",
+    # OCR
+    "pytesseract>=0.3.10",
+    "Pillow>=10.0.0",
+    "watchdog>=3.0.0",
+    # NPI registry / HTTP
+    "requests>=2.31.0",
+    "certifi>=2023.7.22",
+    "urllib3>=2.0.0",
+    # Reports
+    "matplotlib>=3.8.0",
+    # Auth
+    "argon2-cffi>=23.1.0",
+    # Mobile scan upload
+    "qrcode[pil]>=7.4.0",
+]
+
+[project.optional-dependencies]
+# Nova AI assistant + REST surface. A "Nova-less" build simply omits this extra.
+nova = [
+    "fastapi>=0.136.0",
+    "uvicorn>=0.48.0",
+]
+# Build/packaging tooling.
+build = [
+    "pyinstaller>=6.0.0",
+]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[project.scripts]
+dmelogic = "dmelogic.app:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

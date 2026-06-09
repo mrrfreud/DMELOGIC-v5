@@ -1,0 +1,2 @@
+Get-ChildItem $env:LOCALAPPDATA\DMELogic\Logs | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+Get-Content (Get-ChildItem $env:LOCALAPPDATA\DMELogic\Logs | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName -Tail 200

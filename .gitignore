@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+*.spec.bak
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# PyInstaller / installer output
+installer/build/
+installer/dist/
+installer_output/
+*.exe
+
+# Bundled third-party runtimes (provisioned by the installer, never committed)
+vendor/tesseract/
+tesseract_portable/
+
+# App data must NEVER live in the repo or install tree
+# (runtime data root is C:\ProgramData\DMELogic)
+*.db
+*.db-wal
+*.db-shm
+Logs/
+report_exports/
+Exports/
+
+# Secrets / local config
+.env
+config.local.toml
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

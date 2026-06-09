@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "presets": [
+    {
+      "id": "standard_transfer",
+      "name": "Transferred Order - Standard",
+      "bodyIntro": "The following items are being transferred. Please process with the monthly quantities indicated:",
+      "appendMdForm": true,
+      "mdFormPath": null,
+      "fromBlock": [
+        "DME Solutions Pharmacy",
+        "Phone: (000) 000-0000  |  Fax: (000) 000-0000"
+      ],
+      "footerNote": "If you need additional documentation, contact us."
+    },
+    {
+      "id": "incontinence_packet",
+      "name": "Incontinence Supplies Packet",
+      "bodyIntro": "Incontinence supplies requested as listed below. Quantities reflect monthly needs:",
+      "appendMdForm": true,
+      "mdFormPath": null,
+      "fromBlock": [
+        "DME Solutions Pharmacy",
+        "Phone: (000) 000-0000  |  Fax: (000) 000-0000"
+      ],
+      "footerNote": "Includes MD form for incontinence supplies."
+    }
+  ]
+}

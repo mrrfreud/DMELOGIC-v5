@@ -1,0 +1,243 @@
+/* Global font */
+* {
+    font-family: "Segoe UI", "Roboto", sans-serif;
+    font-size: 10pt;
+}
+
+QMainWindow {
+    background-color: #f4f5f7;
+}
+
+QTabWidget::pane {
+    border-top: 1px solid #c0c4cc;
+    background: #ffffff;
+}
+
+QTabBar::tab {
+    background: #e0e3ea;
+    border: 1px solid #c0c4cc;
+    padding: 6px 12px;
+    margin-right: 2px;
+}
+
+QTabBar::tab:selected {
+    background: #ffffff;
+    border-bottom: 1px solid #ffffff;
+}
+
+QTableView {
+    background: #ffffff;
+    gridline-color: #d0d4dc;
+    selection-background-color: #2f80ed;
+    selection-color: #ffffff;
+    alternate-background-color: #f0f2f5;
+}
+
+QHeaderView::section {
+    background-color: #e3e6ee;
+    color: #333333;
+    padding: 4px;
+    border: 1px solid #c0c4cc;
+    font-weight: 600;
+}
+
+QLineEdit, QComboBox, QSpinBox {
+    border: 1px solid #c0c4cc;
+    border-radius: 3px;
+    padding: 4px;
+    background: #ffffff;
+}
+
+QLineEdit:focus, QComboBox:focus {
+    border: 1px solid #2f80ed;
+}
+
+/* Buttons */
+QPushButton {
+    background-color: #2f80ed;
+    color: #ffffff;
+    border-radius: 4px;
+    padding: 6px 14px;
+    border: none;
+    font-weight: 500;
+}
+
+QPushButton:hover {
+    background-color: #2566c7;
+}
+
+QPushButton:pressed {
+    background-color: #1d4f8f;
+}
+
+QPushButton:disabled {
+    background-color: #bfc5d2;
+    color: #f0f0f0;
+}
+
+/* Flat toolbar-style buttons */
+QToolButton {
+    background: transparent;
+    border: none;
+    padding: 4px;
+}
+
+QToolButton:hover {
+    background: #e3e6ee;
+    border-radius: 4px;
+}
+
+/* Bottom summary panel in Orders tab */
+QFrame#OrdersSummaryFrame {
+    background-color: #f0f2f7;
+    border-top: 1px solid #c7ccd8;
+}
+
+/* Bottom summary panel in Patients tab */
+QFrame#PatientsSummaryFrame {
+    background-color: #f7f6f2;
+    border-top: 1px solid #d5cfbd;
+}
+
+QStatusBar {
+    background: #e3e6ee;
+}
+
+/* ==== Global Dark Base (keeps content white) ==== */
+
+QMainWindow {
+    background-color: #1e1e1e;
+    color: #e5e5e5;
+}
+
+/* Global label color for dark theme */
+QLabel {
+    color: #e5e5e5;
+}
+
+QTabWidget::pane {
+    border-top: 1px solid #3c3c3c;
+    background: #252526;
+}
+
+QTabBar::tab {
+    background: #2d2d30;
+    border: 1px solid #3c3c3c;
+    padding: 5px 10px;
+    margin-right: 2px;
+    color: #cccccc;
+}
+
+QTabBar::tab:selected {
+    background: #1e1e1e;
+    border-bottom: 1px solid #1e1e1e;
+    color: #ffffff;
+}
+
+/* Inputs in dark mode */
+QLineEdit, QComboBox, QSpinBox, QTextEdit {
+    background-color: #252526;
+    color: #e5e5e5;
+    border: 1px solid #3c3c3c;
+    border-radius: 3px;
+    padding: 4px;
+}
+
+QLineEdit:focus, QComboBox:focus, QTextEdit:focus {
+    border: 1px solid #3794ff;
+}
+
+/* Tables in dark mode */
+QTableView, QListWidget {
+    background-color: #1e1e1e;
+    color: #e5e5e5;
+    gridline-color: #3c3c3c;
+    alternate-background-color: #252526;
+    selection-background-color: #094771;
+    selection-color: #ffffff;
+}
+
+QHeaderView::section {
+    background-color: #2d2d30;
+    color: #cccccc;
+    padding: 4px;
+    border: 1px solid #3c3c3c;
+    font-weight: 600;
+}
+
+/* Buttons */
+QPushButton {
+    background-color: #0e639c;
+    color: #ffffff;
+    border-radius: 4px;
+    padding: 5px 12px;
+    border: none;
+    font-weight: 500;
+}
+
+QPushButton:hover {
+    background-color: #1177bb;
+}
+
+QPushButton:disabled {
+    background-color: #3c3c3c;
+    color: #7f7f7f;
+}
+
+/* Tool buttons (toolbar style) */
+QToolButton#DocToolButton {
+    background: transparent;
+    border: none;
+    padding: 4px 8px;
+    border-radius: 4px;
+    color: #e5e5e5;
+}
+
+QToolButton#DocToolButton:hover {
+    background-color: #2a2d2e;
+}
+
+/* ==== Document Viewer specific ==== */
+
+QWidget#DocViewerRoot {
+    background-color: #1e1e1e;
+}
+
+QFrame#DocHeaderBar {
+    background-color: #252526;
+    border-bottom: 1px solid #3c3c3c;
+}
+
+QLabel#DocHeaderTitle {
+    font-size: 11pt;
+    font-weight: 600;
+    color: #ffffff;
+}
+
+QLabel#DocHeaderSubtitle {
+    font-size: 9pt;
+    color: #a0a0a0;
+}
+
+QWidget#DocSearchPane {
+    background-color: #252526;
+    border: 1px solid #3c3c3c;
+    border-radius: 6px;
+}
+
+QWidget#DocInfoPane {
+    background-color: #2a2d2e;
+    border: 1px solid #3c3c3c;
+    border-radius: 6px;
+}
+
+QFrame#DocToolbar {
+    background-color: #2d2d30;
+    border-bottom: 1px solid #3c3c3c;
+}
+
+/* Labels in side panes */
+QWidget#DocSearchPane QLabel,
+QWidget#DocInfoPane QLabel {
+    color: #e5e5e5;
+}
