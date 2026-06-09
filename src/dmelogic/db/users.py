@@ -144,8 +144,10 @@ def get_users_db_path(folder_path: Optional[str] = None) -> str:
             from dmelogic.paths import db_dir
             folder = str(db_dir())
         except Exception:
-            # Fallback to default
-            folder = r"C:\Users\pharmacy\Documents\DmeSolutionsV1\Data"
+            # Fallback to the canonical data root if paths can't be imported.
+            import os as _os
+            _pd = _os.environ.get("PROGRAMDATA", r"C:\ProgramData")
+            folder = _os.path.join(_pd, "DMELogic", "Databases")
     Path(folder).mkdir(parents=True, exist_ok=True)
     return os.path.join(folder, "users.db")
 

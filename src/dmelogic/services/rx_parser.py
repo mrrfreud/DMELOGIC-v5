@@ -287,11 +287,13 @@ class RxParser:
             ]
             import os
             # Also check standard installed location
-            prog_data = os.path.join(os.environ.get("PROGRAMDATA", "C:\\ProgramData"),
-                                     "DMELogic", "settings.json")
-            settings_paths.append(prog_data)
-            dme_sol = os.path.join("C:\\Users\\pharmacy\\Documents\\DmeSolutionsV1", "settings.json")
-            settings_paths.append(dme_sol)
+            try:
+                from dmelogic.config import SETTINGS_FILE
+                settings_paths.append(SETTINGS_FILE)
+            except Exception:
+                prog_data = os.path.join(os.environ.get("PROGRAMDATA", "C:\\ProgramData"),
+                                         "DMELogic", "settings.json")
+                settings_paths.append(prog_data)
 
             for sp in settings_paths:
                 if os.path.exists(sp):

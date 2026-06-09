@@ -191,15 +191,23 @@ class DatabaseFolderPage(QWizardPage):
     
     def initializePage(self):
         """Auto-detect existing database folder on page load."""
-        # Check common locations for existing databases
+        # Canonical default for fresh installs.
+        try:
+            from dmelogic.config import data_subdir
+            default_db_folder = str(data_subdir("Databases"))
+        except Exception:
+            _pd = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
+            default_db_folder = os.path.join(_pd, "DMELogic", "Databases")
+
+        # Check common locations for databases carried over from older installs.
         common_paths = [
-            r"C:\Users\pharmacy\Documents\DmeSolutionsV1\Data",
-            r"C:\Dme_Solutions\Data",
-            r"C:\DME_Solutions\Data",
-            r"C:\DMELogic\Data",
+            default_db_folder,
+            r"C:\ProgramData\DMELogic\Databases",
             r"C:\ProgramData\DMELogic\Data",
+            r"C:\DMELogic\Data",
+            r"C:\Dme_Solutions\Data",
         ]
-        
+
         for path in common_paths:
             if os.path.isdir(path):
                 # Check if it contains database files
@@ -209,10 +217,9 @@ class DatabaseFolderPage(QWizardPage):
                     self.status_label.setText(f"✓ Auto-detected! Found {len(db_files)} database(s)")
                     self.status_label.setStyleSheet("color: green; font-weight: bold;")
                     return
-        
-        # If no existing databases found, suggest default
-        if os.path.isdir(r"C:\Users\pharmacy\Documents\DmeSolutionsV1\Data"):
-            self.db_folder_edit.setText(r"C:\Users\pharmacy\Documents\DmeSolutionsV1\Data")
+
+        # No existing data found — suggest the canonical default.
+        self.db_folder_edit.setText(default_db_folder)
     
     def browse_db_folder(self):
         folder = QFileDialog.getExistingDirectory(

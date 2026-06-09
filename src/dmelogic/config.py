@@ -1,15 +1,25 @@
 """
-config.py — Global configuration settings for DMELogic
+config.py — Global configuration settings for DMELogic.
+
+Data lives **outside** the install directory. Everything the app reads or
+writes at runtime (databases, scans, backups, exports, logs) is rooted at a
+single, configurable ``data_root()`` — by default ``C:\\ProgramData\\DMELogic``
+on Windows. The install folder (Program Files) stays small and read-only.
+
+Resolution order for the data root (first that applies wins):
+    1. ``DMELOGIC_DATA_DIR`` environment variable
+    2. ``data_root`` key in settings.json (lets an admin point at a shared
+       network folder so multiple workstations share one dataset)
+    3. Platform default: ``%PROGRAMDATA%\\DMELogic`` (Windows) or
+       ``~/.local/share/DMELogic`` (POSIX)
 """
 
 import os
 import json
 from datetime import datetime
+from pathlib import Path
 
-# -----------------------------
-# Base paths
-# -----------------------------
-DEFAULT_FOLDER_PATH = r"C:\Users\pharmacy\Documents\FaxManagerData\Faxes OCR'd"
+APP_NAME = "DMELogic"
 
 TESSERACT_PATHS = [
     r"C:\Program Files\Tesseract-OCR\tesseract.exe",
@@ -18,17 +28,77 @@ TESSERACT_PATHS = [
     r"tesseract",   # If in PATH
 ]
 
+
+# -----------------------------
+# Canonical data root
+# -----------------------------
+def _platform_default_data_root() -> Path:
+    """Per-machine writable data root, separate from the install directory."""
+    if os.name == "nt":
+        base = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
+        return Path(base) / APP_NAME
+    xdg = os.environ.get("XDG_DATA_HOME")
+    base = Path(xdg) if xdg else Path.home() / ".local" / "share"
+    return base / APP_NAME
+
+
+def data_root() -> Path:
+    """Return the single root under which all runtime data is stored.
+
+    See module docstring for the resolution order. The directory (and the
+    standard subfolders) are created on first access.
+    """
+    # 1. Environment override (useful for tests / portable installs).
+    env = os.environ.get("DMELOGIC_DATA_DIR")
+    candidate: Path | None = Path(env) if env else None
+
+    # 2. settings.json override (admin-configured shared/network location).
+    if candidate is None:
+        try:
+            cfg_file = _settings_file_path()
+            if cfg_file.exists():
+                data = json.loads(cfg_file.read_text(encoding="utf-8") or "{}")
+                value = (data.get("data_root") or "").strip()
+                if value:
+                    candidate = Path(value)
+        except Exception:
+            candidate = None
+
+    # 3. Platform default.
+    if candidate is None:
+        candidate = _platform_default_data_root()
+
+    try:
+        candidate.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        # Last-resort fallback so the app can still start.
+        candidate = Path.home() / APP_NAME
+        candidate.mkdir(parents=True, exist_ok=True)
+    return candidate
+
+
+def data_subdir(name: str) -> Path:
+    """Return (and create) a named subfolder under the data root."""
+    p = data_root() / name
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _settings_file_path() -> Path:
+    """settings.json location — kept in the data root (single source of truth)."""
+    root = os.environ.get("DMELOGIC_DATA_DIR") or os.environ.get("PROGRAMDATA", r"C:\ProgramData") + "\\" + APP_NAME
+    p = Path(root)
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return p / "settings.json"
+
+
 def _get_settings_file() -> str:
-    """Get the path to settings.json in a user-writable location."""
-    if os.name == 'nt':  # Windows
-        local_appdata = os.environ.get('LOCALAPPDATA', os.path.expanduser('~'))
-        settings_dir = os.path.join(local_appdata, "DMELogic")
-    else:
-        settings_dir = os.path.join(os.path.expanduser('~'), ".dmelogic")
-    
-    # Create directory if it doesn't exist
-    os.makedirs(settings_dir, exist_ok=True)
-    return os.path.join(settings_dir, "settings.json")
+    """Backward-compatible string accessor for settings.json path."""
+    return str(_settings_file_path())
+
 
 SETTINGS_FILE = _get_settings_file()
 
@@ -122,46 +192,22 @@ def configure_tesseract() -> bool:
 
 
 # -----------------------------
-# Folder Helpers
+# Folder Helpers (all under the canonical data root)
 # -----------------------------
 def _default_db_folder() -> str:
-    preferred = r"C:\Users\pharmacy\Documents\DmeSolutionsV1\Data"
-    try:
-        os.makedirs(preferred, exist_ok=True)
-        return preferred
-    except Exception:
-        pass
-
-    try:
-        docs = os.path.join(os.path.expanduser("~"), "Documents", "DmeSolutionsV1", "Data")
-        os.makedirs(docs, exist_ok=True)
-        return docs
-    except Exception:
-        pass
-
-    fallback = os.path.join(os.getcwd(), "Data")
-    os.makedirs(fallback, exist_ok=True)
-    return fallback
+    """Default databases folder: <data_root>/Databases."""
+    return str(data_subdir("Databases"))
 
 
 def _default_backup_folder() -> str:
-    preferred = r"C:\Users\pharmacy\Documents\DmeSolutionsV1\Backups"
-    try:
-        os.makedirs(preferred, exist_ok=True)
-        return preferred
-    except Exception:
-        pass
+    """Default backups folder: <data_root>/Backups."""
+    return str(data_subdir("Backups"))
 
-    try:
-        docs = os.path.join(os.path.expanduser("~"), "Documents", "DmeSolutionsV1", "Backups")
-        os.makedirs(docs, exist_ok=True)
-        return docs
-    except Exception:
-        pass
 
-    fallback = os.path.join(os.getcwd(), "Backups")
-    os.makedirs(fallback, exist_ok=True)
-    return fallback
+# Default location for scanned/OCR'd documents (was the old "Faxes OCR'd").
+def _default_scans_folder() -> str:
+    """Default scans folder: <data_root>/Scans."""
+    return str(data_subdir("Scans"))
 
 
 BACKUP_FOLDER = _default_backup_folder()

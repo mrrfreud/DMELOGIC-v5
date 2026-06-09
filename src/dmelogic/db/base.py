@@ -205,16 +205,20 @@ def find_existing_db(filename: str, folder_path: Optional[str] = None) -> Option
         if db_folder:
             paths.append(os.path.join(db_folder, filename))
 
-        # Default DME data folder - check this even if not in settings
-        default_dme_folder = r"C:\Users\pharmacy\Documents\DmeSolutionsV1\Data"
-        if os.path.isdir(default_dme_folder):
-            paths.append(os.path.join(default_dme_folder, filename))
+        # Canonical data root (C:\ProgramData\DMELogic\Databases by default,
+        # or whatever data_root/db_folder resolves to). This is authoritative.
+        try:
+            from dmelogic.paths import db_dir
+            paths.append(os.path.join(str(db_dir()), filename))
+        except Exception:
+            pass
 
-        # Installed builds may store data under ProgramData
+        # Legacy ProgramData layout from earlier installs.
         programdata = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
-        programdata_dmelogic = os.path.join(programdata, "DMELogic", "Data")
-        if os.path.isdir(programdata_dmelogic):
-            paths.append(os.path.join(programdata_dmelogic, filename))
+        for legacy_sub in ("DMELogic\\Databases", "DMELogic\\Data"):
+            legacy_dir = os.path.join(programdata, legacy_sub)
+            if os.path.isdir(legacy_dir):
+                paths.append(os.path.join(legacy_dir, filename))
 
         try:
             parent = os.path.dirname(base_folder)
