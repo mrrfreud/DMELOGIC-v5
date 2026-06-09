@@ -17,7 +17,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+    QAbstractItemView, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMenu, QMessageBox, QPushButton, QSplitter,
     QTextEdit, QVBoxLayout, QWidget,
 )
@@ -57,10 +57,16 @@ class TriageWidget(QWidget):
 
         # Header
         header = QHBoxLayout()
+        title_block = QVBoxLayout()
+        title_block.setSpacing(0)
         title = QLabel("New Rx")
-        title.setStyleSheet("font-size:18px; font-weight:700;")
-        header.addWidget(title)
-        header.addSpacing(16)
+        title.setStyleSheet("font-size:20px; font-weight:800; color:#0f172a;")
+        subtitle = QLabel("Review incoming prescriptions, route them, and track what's happening")
+        subtitle.setStyleSheet("color:#64748b; font-size:11px;")
+        title_block.addWidget(title)
+        title_block.addWidget(subtitle)
+        header.addLayout(title_block)
+        header.addSpacing(24)
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Search documents, notes, status…")
         self.search_edit.setClearButtonEnabled(True)
@@ -76,10 +82,11 @@ class TriageWidget(QWidget):
         # Body splitter
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # Left: locations + queue
-        left = QWidget()
+        # Left: locations + queue (card)
+        left = QFrame()
+        left.setFrameShape(QFrame.Shape.StyledPanel)
         left_l = QVBoxLayout(left)
-        left_l.setContentsMargins(0, 0, 0, 0)
+        left_l.setContentsMargins(10, 10, 10, 10)
         left_l.addWidget(self._muted("LOCATIONS"))
         self.locations = QListWidget()
         self.locations.setMaximumWidth(240)
@@ -92,9 +99,14 @@ class TriageWidget(QWidget):
         left_l.addWidget(self.doc_list, 3)
         splitter.addWidget(left)
 
-        # Center: viewer
+        # Center: viewer (card)
+        viewer_card = QFrame()
+        viewer_card.setFrameShape(QFrame.Shape.StyledPanel)
+        vc_l = QVBoxLayout(viewer_card)
+        vc_l.setContentsMargins(8, 8, 8, 8)
         self.viewer = DocumentViewer()
-        splitter.addWidget(self.viewer)
+        vc_l.addWidget(self.viewer)
+        splitter.addWidget(viewer_card)
 
         # Right: details
         splitter.addWidget(self._build_details_panel())
@@ -105,9 +117,10 @@ class TriageWidget(QWidget):
         root.addWidget(splitter, 1)
 
     def _build_details_panel(self) -> QWidget:
-        panel = QWidget()
+        panel = QFrame()
+        panel.setFrameShape(QFrame.Shape.StyledPanel)
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(4, 0, 0, 0)
+        layout.setContentsMargins(12, 12, 12, 12)
 
         self.detail_name = QLabel("—")
         self.detail_name.setWordWrap(True)
@@ -376,6 +389,11 @@ def main() -> int:
 
     app = QApplication(sys.argv)
     app.setApplicationName("DMELogic — New Rx Triage (preview)")
+    try:
+        from dmelogic.ui.theme_modern import apply_modern_theme
+        apply_modern_theme(app)
+    except Exception:
+        pass
     w = TriageWidget()
     w.resize(1280, 800)
     w.setWindowTitle("DMELogic — New Rx Triage (preview)")

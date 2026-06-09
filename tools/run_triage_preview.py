@@ -69,6 +69,8 @@ def main():
 
     seed_samples()
     app = QApplication(sys.argv)
+    from dmelogic.ui.theme_modern import apply_modern_theme
+    apply_modern_theme(app)
     w = TriageWidget()
     w.setWindowTitle("DMELogic — New Rx Triage (PREVIEW)")
     w.resize(1320, 820)

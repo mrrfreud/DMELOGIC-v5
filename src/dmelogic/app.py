@@ -358,13 +358,24 @@ def main() -> int:
             from dmelogic.ui.splash import update_splash
             if ctx.splash:
                 update_splash(ctx.splash, "Loading theme…")
+            # Modern "Calm Clinical" theme, applied app-wide. This is the
+            # primary look; it supersedes the legacy dme_theme stylesheet.
             try:
-                from dmelogic.dme_theme import apply_theme as apply_dme_theme
-                # dme_theme.apply_theme currently accepts one argument.
-                apply_dme_theme(ctx.app)
+                from dmelogic.ui.theme_modern import apply_modern_theme
+                dark = False
+                try:
+                    mode = (getattr(ctx.config.theme, "default", "light") or "light").lower()
+                    if mode == "dark":
+                        dark = True
+                    elif mode == "system":
+                        from dmelogic.ui.theme_detect import detect_os_theme
+                        dark = detect_os_theme() == "dark"
+                except Exception:
+                    pass
+                apply_modern_theme(ctx.app, dark=dark)
             except Exception as e:
                 import logging
-                logging.getLogger("theme").warning(f"Could not apply DME theme: {e}")
+                logging.getLogger("theme").warning(f"Could not apply modern theme: {e}")
 
         def _build_window(self, ctx: StartupContext):
             import logging
