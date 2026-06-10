@@ -483,14 +483,15 @@ class TriageWidget(QWidget):
     def _link_patient(self):
         if not self._current_doc:
             return
-        # Lightweight linker for now; a full patient picker arrives when the
-        # triage screen is wired into the main window's Patients tab.
-        pid, ok = QInputDialog.getInt(
-            self, "Link to patient", "Patient ID:", min=1
-        )
-        if ok:
+        # Pre-fill the search with the last name parsed from the filename
+        # ("LAST, FIRST …") so the right patient is usually one click away.
+        guess = (self._current_doc.filename or "").split(",")[0].strip()
+        from dmelogic.triage.ui.patient_picker import PatientPickerDialog
+        dlg = PatientPickerDialog(self, initial=guess)
+        if dlg.exec() and dlg.selected_patient():
+            pid, label = dlg.selected_patient()
             self._current_doc = self.svc.link(
-                self._current_doc, patient_id=pid, label=f"patient #{pid}"
+                self._current_doc, patient_id=pid, label=label
             )
             self._show_doc(self._current_doc)
 
