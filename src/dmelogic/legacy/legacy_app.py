@@ -18480,8 +18480,8 @@ class PDFViewer(QMainWindow):
             """)
             card.setCursor(Qt.CursorShape.PointingHandCursor)
             v = QVBoxLayout(card)
-            v.setContentsMargins(16, 14, 16, 14)
-            v.setSpacing(6)
+            v.setContentsMargins(18, 16, 18, 16)
+            v.setSpacing(2)
 
             title_lbl = QLabel(title.upper())
             title_font = QFont("Segoe UI", 9)
@@ -18491,15 +18491,15 @@ class PDFViewer(QMainWindow):
             title_lbl.setStyleSheet("color: #64748b; border: none;")
 
             value_lbl = QLabel("-")
-            value_font = QFont("Segoe UI", 28)
+            value_font = QFont("Segoe UI", 34)
             value_font.setBold(True)
             value_lbl.setFont(value_font)
-            value_lbl.setStyleSheet("color: #0f172a; border: none;")
+            value_lbl.setStyleSheet("color: #2563eb; border: none;")
             value_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
             v.addWidget(title_lbl)
-            v.addWidget(value_lbl)
             v.addStretch(1)
+            v.addWidget(value_lbl)
 
             self.kpi_titles.append(title_lbl)
             self.kpi_values.append(value_lbl)
