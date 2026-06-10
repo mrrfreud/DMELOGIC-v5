@@ -18427,11 +18427,13 @@ class PDFViewer(QMainWindow):
         self.report_start_date = QDateEdit()
         self.report_start_date.setDisplayFormat("MM/dd/yyyy")
         self.report_start_date.setCalendarPopup(True)
+        self.report_start_date.setMinimumWidth(140)
 
         date_label_to = QLabel("To:")
         self.report_end_date = QDateEdit()
         self.report_end_date.setDisplayFormat("MM/dd/yyyy")
         self.report_end_date.setCalendarPopup(True)
+        self.report_end_date.setMinimumWidth(140)
 
         # Default range: last 30 days
         today = datetime.date.today()
