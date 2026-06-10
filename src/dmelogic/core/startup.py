@@ -154,18 +154,15 @@ class Startup:
         if theme is None:
             theme = ctx.config.theme.default
 
+        # Modern "Calm Clinical" theme, applied app-wide. This is the primary
+        # look and supersedes the legacy dme_theme stylesheet.
         try:
-            from dmelogic.dme_theme import apply_theme as apply_dme_theme
-            apply_dme_theme(ctx.app, theme)
-        except TypeError:
-            # dme_theme.apply_theme may only accept one argument in older builds.
-            try:
-                from dmelogic.dme_theme import apply_theme as apply_dme_theme
-                apply_dme_theme(ctx.app)
-            except Exception as e:
-                logger.warning(f"Could not apply DME theme: {e}")
+            from dmelogic.ui.theme_modern import apply_modern_theme
+            apply_modern_theme(ctx.app, dark=(str(theme).lower() == "dark"))
+            logger.info("Modern theme applied (theme=%s, %d chars)",
+                        theme, len(ctx.app.styleSheet()))
         except Exception as e:
-            logger.warning(f"Could not apply DME theme '{theme}': {e}")
+            logger.warning(f"Could not apply modern theme '{theme}': {e}")
 
     def _init_databases(self, ctx: StartupContext) -> None:
         if ctx.is_secondary:

@@ -8400,7 +8400,7 @@ class InventoryItemDialog(QDialog):
         
         # Header
         header = QLabel("📦 " + ("Add New Inventory Item" if self.item_data is None else "Edit Inventory Item"))
-        header.setStyleSheet("font-size: 16px; font-weight: bold; color: #ffffff; padding: 10px;")
+        header.setStyleSheet("font-size: 16px; font-weight: bold; color: #0f172a; padding: 10px;")
         layout.addWidget(header)
         
         # Form
@@ -8801,7 +8801,7 @@ class InventoryReportsDialog(QDialog):
         
         # Header
         header = QLabel("📊 Inventory Reports & Analytics")
-        header.setStyleSheet("font-size: 18px; font-weight: bold; color: #ffffff; padding: 10px;")
+        header.setStyleSheet("font-size: 18px; font-weight: bold; color: #0f172a; padding: 10px;")
         layout.addWidget(header)
         
         # Report Selection Area
@@ -9796,7 +9796,7 @@ class CategoryManagerDialog(QDialog):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         header = QLabel("🗂️ Inventory Categories")
-        header.setStyleSheet("font-size: 16px; font-weight: bold; color: #ffffff; padding: 8px;")
+        header.setStyleSheet("font-size: 16px; font-weight: bold; color: #0f172a; padding: 8px;")
         layout.addWidget(header)
 
         self.table = QTableWidget(0, 1)
@@ -11574,8 +11574,11 @@ class PDFViewer(QMainWindow):
             doc_idx = self.main_tabs.indexOf(doc_tab)
             self.main_tabs.insertTab(doc_idx, self._new_rx_tab, "New Rx")
             self.main_tabs.setTabVisible(self.main_tabs.indexOf(doc_tab), False)
+            debug_log(f"[New Rx] triage tab inserted at index {doc_idx}; "
+                      f"Document Viewer hidden. tab count={self.main_tabs.count()}")
         except Exception as _e:
-            debug_log(f"Could not add New Rx triage tab: {_e}")
+            import traceback
+            debug_log(f"Could not add New Rx triage tab: {_e}\n{traceback.format_exc()}")
 
         # === KEYBOARD SHORTCUTS FOR PRODUCTIVITY ===
         from PyQt6.QtGui import QShortcut, QKeySequence
@@ -14579,7 +14582,7 @@ class PDFViewer(QMainWindow):
         
         # Header
         header = QLabel("🩺 Prescriber Management System")
-        header.setStyleSheet("font-size: 20px; font-weight: bold; color: #ffffff; padding: 10px;")
+        header.setStyleSheet("font-size: 20px; font-weight: bold; color: #0f172a; padding: 10px;")
         layout.addWidget(header)
         
         # Toolbar with draggable buttons
@@ -14744,7 +14747,7 @@ class PDFViewer(QMainWindow):
         
         # Header
         header = QLabel("🏥 Clinic Management System")
-        header.setStyleSheet("font-size: 20px; font-weight: bold; color: #ffffff; padding: 10px;")
+        header.setStyleSheet("font-size: 20px; font-weight: bold; color: #0f172a; padding: 10px;")
         layout.addWidget(header)
         
         # Toolbar with buttons
@@ -16302,7 +16305,7 @@ class PDFViewer(QMainWindow):
         layout.setSpacing(12)
 
         header = QLabel("🚚 Orders That Must Go Out")
-        header.setStyleSheet("font-size: 20px; font-weight: bold; color: #ffffff; padding-top: 6px;")
+        header.setStyleSheet("font-size: 20px; font-weight: bold; color: #0f172a; padding-top: 6px;")
         layout.addWidget(header)
 
         description = QLabel(
@@ -18114,7 +18117,7 @@ class PDFViewer(QMainWindow):
         
         # Header
         header = QLabel("📦 Inventory Management System")
-        header.setStyleSheet("font-size: 20px; font-weight: bold; color: #ffffff; padding: 10px;")
+        header.setStyleSheet("font-size: 20px; font-weight: bold; color: #0f172a; padding: 10px;")
         layout.addWidget(header)
         
         # Toolbar
@@ -18210,7 +18213,7 @@ class PDFViewer(QMainWindow):
         
         # Header
         header = QLabel("💰 Billing & Insurance Management")
-        header.setStyleSheet("font-size: 20px; font-weight: bold; color: #ffffff; padding: 10px;")
+        header.setStyleSheet("font-size: 20px; font-weight: bold; color: #0f172a; padding: 10px;")
         layout.addWidget(header)
         
         # Billing toolbar
@@ -18275,7 +18278,7 @@ class PDFViewer(QMainWindow):
         summary_layout = QHBoxLayout()
         
         self.total_claims_label = QLabel("Total Claims: $0.00")
-        self.total_claims_label.setStyleSheet("font-weight: bold; color: #ffffff;")
+        self.total_claims_label.setStyleSheet("font-weight: bold; color: #0f172a;")
         summary_layout.addWidget(self.total_claims_label)
         
         self.total_paid_label = QLabel("Total Paid: $0.00")
@@ -18319,7 +18322,7 @@ class PDFViewer(QMainWindow):
         header_font = QFont("Segoe UI", 13)
         header_font.setBold(True)
         header.setFont(header_font)
-        header.setStyleSheet("color: #ffffff;")
+        header.setStyleSheet("color: #0f172a; font-size: 20px; font-weight: bold; padding: 10px;")
         main_layout.addWidget(header)
 
         # ===== Toolbar – report selectors + date range =====
@@ -18974,7 +18977,7 @@ class PDFViewer(QMainWindow):
         
         # Header
         header = QLabel("💊 Process Refills - Refill Due Tracking")
-        header.setStyleSheet("font-size: 20px; font-weight: bold; color: #ffffff; padding: 10px;")
+        header.setStyleSheet("font-size: 20px; font-weight: bold; color: #0f172a; padding: 10px;")
         layout.addWidget(header)
         
         # Date range controls
@@ -39296,7 +39299,7 @@ class PDFViewer(QMainWindow):
         
         # Header
         header = QLabel("🔍 ICD-10 Code Search")
-        header.setStyleSheet("font-size: 20px; font-weight: bold; color: #ffffff; padding: 10px;")
+        header.setStyleSheet("font-size: 20px; font-weight: bold; color: #0f172a; padding: 10px;")
         layout.addWidget(header)
         
         # Info text

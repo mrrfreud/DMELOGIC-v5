@@ -412,6 +412,23 @@ def main() -> int:
         def _post_window_setup(self, ctx: StartupContext, win) -> None:
             super()._post_window_setup(ctx, win)
 
+            # Re-apply the modern theme on a timer AFTER the window's own init
+            # finishes (UI-scale/theme-manager calls during window build can
+            # otherwise re-stamp the app stylesheet). Fires via the event loop,
+            # so it isn't blocked by the onboarding modal below.
+            def _final_theme():
+                try:
+                    from dmelogic.ui.theme_modern import apply_modern_theme
+                    apply_modern_theme(ctx.app)
+                except Exception as _e:
+                    import logging
+                    logging.getLogger("theme").warning(f"Final theme re-apply failed: {_e}")
+            try:
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(600, _final_theme)
+            except Exception:
+                pass
+
             # First-run onboarding: if no company profile is configured yet,
             # collect the business details (skippable) so forms/faxes are
             # branded. Editable later via Settings → Company Profile.
@@ -442,6 +459,22 @@ def main() -> int:
                 log_db_diagnostics()
             except Exception:
                 pass
+
+            # Force the modern theme as the FINAL stylesheet, after the window
+            # and all legacy widgets are built. This guarantees the modern look
+            # wins over the legacy dme_theme stylesheet regardless of which
+            # _apply_theme ran earlier in the sequence.
+            try:
+                import logging
+                from dmelogic.ui.theme_modern import apply_modern_theme
+                apply_modern_theme(ctx.app)
+                logging.getLogger("theme").info(
+                    "Modern theme applied post-window (final stylesheet, %d chars)",
+                    len(ctx.app.styleSheet()),
+                )
+            except Exception as e:
+                import logging
+                logging.getLogger("theme").warning(f"Modern theme post-apply failed: {e}")
 
     return DMELogicStartup(project_root).run()
 
