@@ -18,6 +18,7 @@ class EventType(str, Enum):
     REOPENED = "reopened"    # pulled back into the New Rx queue
     DISMISSED = "dismissed"  # removed from the queue without moving the file
     UNDONE = "undone"        # last move was reversed
+    DELETED = "deleted"      # file sent to Trash and removed from the queue
 
 
 @dataclass
@@ -87,5 +88,6 @@ class DocumentEvent:
             EventType.REOPENED: "Reopened into New Rx",
             EventType.DISMISSED: "Dismissed from queue (file left in place)",
             EventType.UNDONE: f"Undid move{(' — ' + self.detail) if self.detail else ''}",
+            EventType.DELETED: "Deleted (moved to Trash)",
         }.get(self.type, self.detail or self.type.value)
         return text

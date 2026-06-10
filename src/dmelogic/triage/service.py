@@ -164,6 +164,32 @@ class TriageService:
         self.store.add_event(doc.id, EventType.DISMISSED, user=_current_user())
         return doc
 
+    def delete(self, doc: Document) -> Document:
+        """Send the file to a Trash folder and remove it from the queue.
+
+        Not a permanent delete — the file is moved to ``<data_root>/Trash`` so a
+        mistaken delete of a prescription record stays recoverable.
+        """
+        from dmelogic.config import data_subdir
+        trash = data_subdir("Trash")
+        src = Path(doc.current_path)
+        dst = trash / src.name
+        if dst.exists() and dst != src:
+            dst = self._dedupe(dst)   # keep every trashed file
+        try:
+            if src.exists():
+                shutil.move(str(src), str(dst))
+        except OSError as e:
+            logger.warning("Delete (move to Trash) failed: %s", e)
+            return doc
+        doc.current_path = str(dst)
+        doc.dismissed = True
+        doc.bucket_id = None
+        doc.status = "Deleted"
+        self.store.update_document(doc)
+        self.store.add_event(doc.id, EventType.DELETED, user=_current_user())
+        return doc
+
     def undo_last_move(self, doc: Document) -> Document:
         """Reverse the most recent move, returning the file to where it was."""
         if not doc.previous_path:

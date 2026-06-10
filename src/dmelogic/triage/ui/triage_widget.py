@@ -328,6 +328,13 @@ class TriageWidget(QWidget):
         dismiss.clicked.connect(self._dismiss)
         self.routing_layout.addWidget(dismiss)
 
+        delete = QPushButton("🗑 Delete (move to Trash)")
+        delete.setStyleSheet(
+            "text-align:left; padding:6px 10px; color:#b91c1c; border:1px solid #fecaca;"
+            " border-radius:8px; background:#ffffff;")
+        delete.clicked.connect(self._delete)
+        self.routing_layout.addWidget(delete)
+
     # ── selection ───────────────────────────────────────────────────────
     def _on_location_changed(self, *_):
         item = self.locations.currentItem()
@@ -448,6 +455,21 @@ class TriageWidget(QWidget):
         )
         if resp == QMessageBox.StandardButton.Yes:
             self.svc.dismiss(self._current_doc)
+            self._current_doc = None
+            self.refresh()
+
+    def _delete(self):
+        if not self._current_doc:
+            return
+        resp = QMessageBox.question(
+            self, "Delete document",
+            f"Delete “{self._current_doc.filename}”?\n\n"
+            "The file is moved to the Trash folder (recoverable) and removed "
+            "from the queue.",
+        )
+        if resp == QMessageBox.StandardButton.Yes:
+            self.viewer.release()  # free the handle so the file can be moved
+            self.svc.delete(self._current_doc)
             self._current_doc = None
             self.refresh()
 
