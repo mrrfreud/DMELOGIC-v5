@@ -95,6 +95,15 @@ class DocumentViewer(QWidget):
     def clear(self) -> None:
         self.load(None)
 
+    def release(self) -> None:
+        """Release the open file handle so the file can be moved/renamed.
+
+        Keeps the currently rendered page visible (it's already a QPixmap), just
+        closes the underlying PDF document — required on Windows, where an open
+        file can't be moved.
+        """
+        self._close_pdf()
+
     # ── PDF handling ────────────────────────────────────────────────────
     def _load_pdf(self) -> None:
         try:

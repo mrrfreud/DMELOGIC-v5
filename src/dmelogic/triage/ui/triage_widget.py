@@ -33,6 +33,46 @@ _INBOX_KEY = "__inbox__"
 _ALL_KEY = "__all__"
 
 
+class _DropLocationsList(QListWidget):
+    """Locations list that accepts a document dragged from the queue.
+
+    Dropping a document onto a bucket routes it there; dropping onto New Rx
+    reopens it. The actual move is handled by the parent via ``on_drop``.
+    """
+
+    def __init__(self, on_drop, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._on_drop = on_drop
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+
+    def dragEnterEvent(self, event):
+        if event.source() is not None:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        # Note: do NOT change the current item here — switching locations
+        # mid-drag would change which document is selected.
+        item = self.itemAt(event.position().toPoint())
+        if item is not None and event.source() is not None:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        item = self.itemAt(event.position().toPoint())
+        if item is not None:
+            try:
+                self._on_drop(item.data(Qt.ItemDataRole.UserRole))
+            except Exception as e:  # pragma: no cover
+                logger.warning("drop routing failed: %s", e)
+        event.acceptProposedAction()
+        # Deliberately not calling super().dropEvent — we route the document
+        # ourselves and never want the default item-reparenting behavior.
+
+
 class TriageWidget(QWidget):
     def __init__(self, service: TriageService | None = None,
                  parent: QWidget | None = None):
@@ -88,7 +128,7 @@ class TriageWidget(QWidget):
         left_l = QVBoxLayout(left)
         left_l.setContentsMargins(10, 10, 10, 10)
         left_l.addWidget(self._muted("LOCATIONS"))
-        self.locations = QListWidget()
+        self.locations = _DropLocationsList(self._on_document_dropped)
         self.locations.setMaximumWidth(240)
         self.locations.currentItemChanged.connect(self._on_location_changed)
         left_l.addWidget(self.locations, 1)
@@ -96,6 +136,11 @@ class TriageWidget(QWidget):
         self.doc_list = QListWidget()
         self.doc_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.doc_list.currentItemChanged.connect(self._on_doc_changed)
+        # Allow dragging a document onto a bucket in Locations to route it.
+        self.doc_list.setDragEnabled(True)
+        self.doc_list.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
+        self.doc_list.setToolTip("Tip: drag a document onto a bucket to route it, "
+                                 "or use the MOVE TO buttons.")
         left_l.addWidget(self.doc_list, 3)
         splitter.addWidget(left)
 
@@ -290,6 +335,19 @@ class TriageWidget(QWidget):
             self._location = item.data(Qt.ItemDataRole.UserRole)
             self._refresh_doc_list()
 
+    def _on_document_dropped(self, key):
+        """A document was dragged from the queue onto a location — route it."""
+        if not self._current_doc:
+            return
+        if key == _INBOX_KEY:
+            self._reopen()
+        elif key == _ALL_KEY:
+            return
+        elif isinstance(key, int):
+            bucket = self.svc.store.get_bucket(key)
+            if bucket:
+                self._move_to(bucket)
+
     def _on_doc_changed(self, *_):
         item = self.doc_list.currentItem()
         if not item:
@@ -347,6 +405,7 @@ class TriageWidget(QWidget):
             self, "Rename document", "New file name:", text=self._current_doc.filename
         )
         if ok and new.strip():
+            self.viewer.release()  # free the handle so the rename can succeed
             self._current_doc = self.svc.rename_document(self._current_doc, new)
             self.refresh(keep_selection=True)
             self._show_doc(self._current_doc)
@@ -364,6 +423,7 @@ class TriageWidget(QWidget):
     def _move_to(self, bucket):
         if not self._current_doc:
             return
+        self.viewer.release()  # free the file handle so the move can succeed
         self._current_doc = self.svc.move_to_bucket(self._current_doc, bucket)
         self.refresh(keep_selection=True)
 
@@ -373,6 +433,7 @@ class TriageWidget(QWidget):
         if not self._current_doc.previous_path:
             QMessageBox.information(self, "Undo", "Nothing to undo for this document.")
             return
+        self.viewer.release()
         self._current_doc = self.svc.undo_last_move(self._current_doc)
         self.refresh(keep_selection=True)
 
@@ -393,6 +454,7 @@ class TriageWidget(QWidget):
     def _reopen(self):
         if not self._current_doc:
             return
+        self.viewer.release()
         self._current_doc = self.svc.reopen(self._current_doc)
         self.refresh(keep_selection=True)
 
