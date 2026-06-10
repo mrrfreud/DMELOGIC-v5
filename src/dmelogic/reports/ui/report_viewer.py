@@ -242,6 +242,16 @@ class ReportViewer(QWidget):
         headers = [col.display_name for col in report_data.columns]
         self.table.setHorizontalHeaderLabels(headers)
 
+        # Render any "Status" column as colored status pills (modern look).
+        try:
+            from dmelogic.ui.widgets import StatusPillDelegate
+            for col_idx, h in enumerate(headers):
+                if str(h).strip().lower() == "status":
+                    self.table.setItemDelegateForColumn(
+                        col_idx, StatusPillDelegate(self.table))
+        except Exception:
+            pass
+
         # Populate rows
         for row in report_data.rows:
             row_idx = self.table.rowCount()

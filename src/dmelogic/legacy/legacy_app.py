@@ -18464,45 +18464,12 @@ class PDFViewer(QMainWindow):
         self.kpi_values = []
         self.kpi_cards = []
 
-        def make_kpi_card(title: str) -> QFrame:
-            card = QFrame()
-            card.setFrameShape(QFrame.Shape.StyledPanel)
-            card.setMinimumHeight(96)
-            card.setStyleSheet("""
-                QFrame {
-                    background-color: #ffffff;
-                    border-radius: 12px;
-                    border: 1px solid #e2e8f0;
-                }
-                QFrame:hover {
-                    border: 1px solid #2563eb;
-                }
-            """)
-            card.setCursor(Qt.CursorShape.PointingHandCursor)
-            v = QVBoxLayout(card)
-            v.setContentsMargins(18, 16, 18, 16)
-            v.setSpacing(2)
-
-            title_lbl = QLabel(title.upper())
-            title_font = QFont("Segoe UI", 9)
-            title_font.setBold(True)
-            title_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.5)
-            title_lbl.setFont(title_font)
-            title_lbl.setStyleSheet("color: #64748b; border: none;")
-
-            value_lbl = QLabel("-")
-            value_font = QFont("Segoe UI", 34)
-            value_font.setBold(True)
-            value_lbl.setFont(value_font)
-            value_lbl.setStyleSheet("color: #2563eb; border: none;")
-            value_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-
-            v.addWidget(title_lbl)
-            v.addStretch(1)
-            v.addWidget(value_lbl)
-
-            self.kpi_titles.append(title_lbl)
-            self.kpi_values.append(value_lbl)
+        def make_kpi_card(title: str):
+            # Modern stat card with an embedded mini-chart (StatCard).
+            from dmelogic.ui.widgets import StatCard
+            card = StatCard(title)
+            self.kpi_titles.append(card.title_label)
+            self.kpi_values.append(card.value_label)
             self.kpi_cards.append(card)
             return card
 
@@ -18664,6 +18631,7 @@ class PDFViewer(QMainWindow):
             pending_orders = 0
             due_refills = 0
             low_stock_items = 0
+            monthly_series = []  # order counts per month, for the mini-charts
 
             # --- Orders / refills ---
             orders_path = getattr(self, "orders_database_file", None)
@@ -18696,6 +18664,18 @@ class PDFViewer(QMainWindow):
                 except Exception:
                     due_refills = 0
 
+                # Monthly order counts (last 6 months) for the card mini-charts
+                try:
+                    cur.execute(
+                        "SELECT strftime('%Y-%m', order_date) AS m, COUNT(*) "
+                        "FROM orders WHERE order_date IS NOT NULL "
+                        "GROUP BY m ORDER BY m DESC LIMIT 6"
+                    )
+                    rows = cur.fetchall()
+                    monthly_series = [int(r[1]) for r in reversed(rows)] if rows else []
+                except Exception:
+                    monthly_series = []
+
                 conn.close()
 
             # --- Inventory low stock snapshot ---
@@ -18724,6 +18704,23 @@ class PDFViewer(QMainWindow):
                 ("Refills Due", due_refills),
                 ("At/Below Reorder", low_stock_items),
             ])
+
+            # Populate the embedded mini-charts with live data.
+            try:
+                cards = getattr(self, "kpi_cards", [])
+                series = monthly_series if monthly_series else [0, 0, 0, 0, 0, 0]
+                if len(cards) >= 4 and hasattr(cards[0], "set_sparkline"):
+                    cards[0].set_sparkline(series)
+                    rest = max(0, total_orders - pending_orders)
+                    cards[1].set_donut([pending_orders, rest],
+                                       colors=["#f59e0b", "#2563eb"])
+                    cards[2].set_bars(series)
+                    if low_stock_items:
+                        cards[3].set_icon("⚠", color="#f59e0b")
+                    else:
+                        cards[3].set_icon("✓", color="#16a34a")
+            except Exception:
+                pass
 
         except Exception as e:
             # Non-fatal; just log to console so the UI keeps working
