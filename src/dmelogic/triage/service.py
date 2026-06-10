@@ -70,13 +70,29 @@ class TriageService:
 
     # ── intake ──────────────────────────────────────────────────────────
     def scan_inbox(self) -> list[Document]:
-        """Register any new files in the New Rx folder; return the new docs."""
+        """Register new files in the intake folder; drop orphaned records.
+
+        Also reconciles the queue: any tracked document whose file no longer
+        exists on disk (moved/renamed/deleted outside the app, e.g. after the
+        intake folder was renamed) is dropped from the queue so the list only
+        ever shows documents that actually exist.
+        """
         folder = new_rx_folder()
         new_docs: list[Document] = []
+
+        # Reconcile: drop inbox entries whose file is gone (e.g. orphans left
+        # after the intake folder was renamed, or files removed outside the app).
+        try:
+            for doc in self.store.list_documents(bucket_id=None):
+                if not Path(doc.current_path).exists():
+                    self.store.remove_document(doc.id)
+        except Exception as e:
+            logger.warning("Reconcile failed: %s", e)
+
         try:
             entries = sorted(folder.iterdir())
         except OSError as e:
-            logger.warning("Cannot read New Rx folder %s: %s", folder, e)
+            logger.warning("Cannot read intake folder %s: %s", folder, e)
             return new_docs
 
         for entry in entries:

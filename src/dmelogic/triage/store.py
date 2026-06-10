@@ -250,6 +250,13 @@ class TriageStore:
             r = conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
             return self._row_to_document(r) if r else None
 
+    def remove_document(self, doc_id: int) -> None:
+        """Hard-delete a document record (and its events). Used to drop
+        orphaned entries whose file no longer exists on disk."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
+            conn.commit()
+
     def find_by_path(self, path: str) -> Optional[Document]:
         with self._connect() as conn:
             r = conn.execute(
