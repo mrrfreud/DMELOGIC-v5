@@ -76,7 +76,17 @@ class Startup:
         )
 
         self._apply_theme(ctx)
-        self._init_databases(ctx)
+        try:
+            self._init_databases(ctx)
+        except Exception as e:
+            logger.critical("Startup aborted due to database initialization error: %s", e)
+            QMessageBox.critical(
+                None,
+                "Database Initialization Error",
+                "DMELogic could not start because database initialization failed.\n\n"
+                f"Details: {e}",
+            )
+            return 1
         self._init_services(ctx)
         self._configure_ocr(ctx)
         self._authenticate(ctx)
