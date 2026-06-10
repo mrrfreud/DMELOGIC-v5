@@ -18461,35 +18461,39 @@ class PDFViewer(QMainWindow):
         def make_kpi_card(title: str) -> QFrame:
             card = QFrame()
             card.setFrameShape(QFrame.Shape.StyledPanel)
+            card.setMinimumHeight(96)
             card.setStyleSheet("""
                 QFrame {
                     background-color: #ffffff;
-                    border-radius: 6px;
-                    border: 1px solid #d0d0d0;
+                    border-radius: 12px;
+                    border: 1px solid #e2e8f0;
                 }
                 QFrame:hover {
-                    border: 2px solid #1976d2;
+                    border: 1px solid #2563eb;
                 }
             """)
             card.setCursor(Qt.CursorShape.PointingHandCursor)
             v = QVBoxLayout(card)
-            v.setContentsMargins(10, 8, 10, 8)
+            v.setContentsMargins(16, 14, 16, 14)
+            v.setSpacing(6)
 
-            title_lbl = QLabel(title)
+            title_lbl = QLabel(title.upper())
             title_font = QFont("Segoe UI", 9)
             title_font.setBold(True)
+            title_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.5)
             title_lbl.setFont(title_font)
-            title_lbl.setStyleSheet("color: #555555;")
+            title_lbl.setStyleSheet("color: #64748b; border: none;")
+
             value_lbl = QLabel("-")
-            value_font = QFont("Segoe UI", 14)
+            value_font = QFont("Segoe UI", 28)
             value_font.setBold(True)
             value_lbl.setFont(value_font)
-            value_lbl.setStyleSheet("color: #1976d2;")
-            value_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            value_lbl.setStyleSheet("color: #0f172a; border: none;")
+            value_lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
             v.addWidget(title_lbl)
-            v.addStretch(1)
             v.addWidget(value_lbl)
+            v.addStretch(1)
 
             self.kpi_titles.append(title_lbl)
             self.kpi_values.append(value_lbl)
