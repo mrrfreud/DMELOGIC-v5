@@ -116,11 +116,9 @@ class TriageService:
         dest_dir.mkdir(parents=True, exist_ok=True)
         src = Path(doc.current_path)
         dst = dest_dir / src.name
-        if dst.exists() and dst != src:
-            dst = self._dedupe(dst)
         try:
             if src.exists():
-                shutil.move(str(src), str(dst))
+                dst = self._move_over(src, dst)
             else:
                 logger.warning("Source file missing on move: %s", src)
         except OSError as e:
@@ -152,11 +150,9 @@ class TriageService:
         src = Path(doc.current_path)
         prev.parent.mkdir(parents=True, exist_ok=True)
         dst = prev
-        if dst.exists() and dst != src:
-            dst = self._dedupe(dst)
         try:
             if src.exists():
-                shutil.move(str(src), str(dst))
+                dst = self._move_over(src, dst)
         except OSError as e:
             logger.warning("Undo move failed: %s", e)
             return doc
@@ -191,15 +187,13 @@ class TriageService:
         return "#"
 
     def reopen(self, doc: Document) -> Document:
-        """Pull a document back into the New Rx inbox."""
+        """Pull a document back into the New Rx inbox (move, not copy)."""
         dest = new_rx_folder()
         src = Path(doc.current_path)
         dst = dest / src.name
-        if dst.exists() and dst != src:
-            dst = self._dedupe(dst)
         try:
             if src.exists():
-                shutil.move(str(src), str(dst))
+                dst = self._move_over(src, dst)
         except OSError as e:
             logger.warning("Reopen move failed: %s", e)
             return doc
@@ -282,3 +276,22 @@ class TriageService:
             if not candidate.exists():
                 return candidate
             n += 1
+
+    @staticmethod
+    def _move_over(src: Path, dst: Path) -> Path:
+        """Move src to dst, REPLACING any existing file at dst.
+
+        Used for routing/reopen/undo so a re-filed document never piles up
+        duplicate "(2)", "(3)" copies — there is always exactly one file, and
+        the source is always removed.
+        """
+        src, dst = Path(src), Path(dst)
+        if dst == src:
+            return dst
+        try:
+            if dst.exists():
+                dst.unlink()
+        except OSError:
+            pass
+        shutil.move(str(src), str(dst))
+        return dst

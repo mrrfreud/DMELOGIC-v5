@@ -208,9 +208,16 @@ class Startup:
         try:
             from dmelogic.db.migrations import run_all_migrations
             with timed_step("migrations"):
-                run_all_migrations()
+                results = run_all_migrations()
+            failed = [name for name, count in results.items() if count < 0]
+            if failed:
+                # Fail fast so we never run against a partially migrated schema.
+                raise RuntimeError(
+                    "Database migrations failed for: " + ", ".join(sorted(failed))
+                )
         except Exception as e:
             logger.exception(f"Migrations failed: {e}")
+            raise
 
     def _init_services(self, ctx: StartupContext) -> None:
         if ctx.is_secondary:
