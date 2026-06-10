@@ -18406,13 +18406,21 @@ class PDFViewer(QMainWindow):
         _bind_report(analytics_btn, self.open_order_analytics)
         import_payments_btn.clicked.connect(self.import_payment_reconciliation)
 
+        # Row 1: first half of the report buttons.
         for btn in (patient_btn, order_btn, recon_btn, delivery_btn,
-                invoice_btn, inventory_btn, billing_btn, profit_btn,
-            ar_aging_btn, status_btn, refills_btn, analytics_btn, import_payments_btn):
+                    invoice_btn, inventory_btn, billing_btn):
             toolbar_row.addWidget(btn)
+        toolbar_row.addStretch(1)
 
-        toolbar_row.addItem(QSpacerItem(20, 10, QSizePolicy.Policy.Expanding,
-                                        QSizePolicy.Policy.Minimum))
+        # Row 2: remaining report buttons + import + date range + generate.
+        toolbar_row2 = QHBoxLayout()
+        toolbar_row2.setSpacing(6)
+        for btn in (profit_btn, ar_aging_btn, status_btn, refills_btn,
+                    analytics_btn, import_payments_btn):
+            toolbar_row2.addWidget(btn)
+
+        toolbar_row2.addItem(QSpacerItem(20, 10, QSizePolicy.Policy.Expanding,
+                                         QSizePolicy.Policy.Minimum))
 
         # Date range pickers
         date_label = QLabel("From:")
@@ -18431,10 +18439,10 @@ class PDFViewer(QMainWindow):
         self.report_start_date.setDate(QDate(start.year, start.month, start.day))
         self.report_end_date.setDate(QDate(today.year, today.month, today.day))
 
-        toolbar_row.addWidget(date_label)
-        toolbar_row.addWidget(self.report_start_date)
-        toolbar_row.addWidget(date_label_to)
-        toolbar_row.addWidget(self.report_end_date)
+        toolbar_row2.addWidget(date_label)
+        toolbar_row2.addWidget(self.report_start_date)
+        toolbar_row2.addWidget(date_label_to)
+        toolbar_row2.addWidget(self.report_end_date)
 
         # Generate button
         generate_report_btn = QPushButton("Generate Report")
@@ -18453,9 +18461,10 @@ class PDFViewer(QMainWindow):
             }
         """)
         generate_report_btn.clicked.connect(self._generate_last_report)
-        toolbar_row.addWidget(generate_report_btn)
+        toolbar_row2.addWidget(generate_report_btn)
 
         main_layout.addLayout(toolbar_row)
+        main_layout.addLayout(toolbar_row2)
 
         # ===== KPI row =====
         kpi_row = QHBoxLayout()
