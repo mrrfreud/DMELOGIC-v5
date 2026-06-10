@@ -235,7 +235,14 @@ def configure_tesseract():
     return False
 
 
-SETTINGS_FILE = "settings.json"
+# v5: use the canonical settings.json in the data root (the same file the modern
+# code uses), so the legacy and modern layers share one settings source and the
+# legacy never reads a different install's settings / stale folder paths.
+try:
+    from dmelogic.config import SETTINGS_FILE as _V5_SETTINGS_FILE
+    SETTINGS_FILE = _V5_SETTINGS_FILE
+except Exception:
+    SETTINGS_FILE = "settings.json"
 
 
 # Centralized, user-writable default database folder
@@ -12410,42 +12417,25 @@ class PDFViewer(QMainWindow):
             print(f"Alert click handler error: {e}")
 
     def _focus_document_viewer_tab(self, folder_path: str | None = None, file_path: str | None = None):
-        """Bring the Document Viewer tab into focus and optionally open a file."""
+        """Redirect to the New Rx triage tab.
+
+        The legacy Document Viewer has been retired and replaced by the New Rx
+        triage screen, so every code path that used to open the document viewer
+        now surfaces the New Rx tab instead (and refreshes its queue).
+        """
         try:
-            doc_index = None
             for i in range(self.main_tabs.count()):
-                if "Document Viewer" in self.main_tabs.tabText(i):
-                    doc_index = i
-                    break
-
-            if doc_index is None:
-                return
-
-            self.main_tabs.setCurrentIndex(doc_index)
-
-            if folder_path and os.path.isdir(folder_path):
-                if getattr(self, "folder_path", None) != folder_path:
-                    self.folder_path = folder_path
-                    if hasattr(self, 'browse_folder_label'):
-                        self._update_browse_folder_label()
-                    if hasattr(self, "load_file_list"):
-                        self.load_file_list()
-
-            if file_path and os.path.exists(file_path):
-                filename = os.path.basename(file_path)
-                if hasattr(self, "file_list_widget") and self.file_list_widget:
-                    for row in range(self.file_list_widget.count()):
-                        item = self.file_list_widget.item(row)
-                        if item and (self._get_file_item_name(item) or item.text()).strip() == filename:
-                            self.file_list_widget.setCurrentRow(row)
-                            self.file_list_widget.scrollToItem(
-                                item, QAbstractItemView.ScrollHint.PositionAtCenter
-                            )
-                            break
-                if hasattr(self, "load_pdf"):
-                    self.load_pdf(file_path)
+                if "New Rx" in self.main_tabs.tabText(i):
+                    self.main_tabs.setCurrentIndex(i)
+                    tab = self.main_tabs.widget(i)
+                    if hasattr(tab, "refresh"):
+                        try:
+                            tab.refresh(scan=True, keep_selection=True)
+                        except Exception:
+                            pass
+                    return
         except Exception as e:
-            print(f"Document viewer focus error: {e}")
+            print(f"New Rx focus error: {e}")
 
     def _dash_go_to_task(self, item):
         """Navigate to Tasks tab when clicking a task in dashboard."""
