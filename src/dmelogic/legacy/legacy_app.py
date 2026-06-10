@@ -11797,8 +11797,8 @@ class PDFViewer(QMainWindow):
             QGroupBox {
                 font-size: 10pt;
                 font-weight: 600;
-                color: #ffffff;
-                border: 1px solid #555;
+                color: #0f172a;
+                border: 1px solid #e2e8f0;
                 border-radius: 8px;
                 margin-top: 10px;
                 padding-top: 10px;
@@ -11829,8 +11829,8 @@ class PDFViewer(QMainWindow):
             QGroupBox {
                 font-size: 10pt;
                 font-weight: 600;
-                color: #ffffff;
-                border: 1px solid #555;
+                color: #0f172a;
+                border: 1px solid #e2e8f0;
                 border-radius: 8px;
                 margin-top: 10px;
                 padding-top: 10px;
@@ -11881,8 +11881,8 @@ class PDFViewer(QMainWindow):
             QGroupBox {
                 font-size: 14px;
                 font-weight: bold;
-                color: #ffffff;
-                border: 1px solid #555;
+                color: #0f172a;
+                border: 1px solid #e2e8f0;
                 border-radius: 8px;
                 margin-top: 10px;
                 padding-top: 10px;
@@ -11898,14 +11898,20 @@ class PDFViewer(QMainWindow):
 
         action_btn_style = """
             QPushButton {
-                background-color: #3C3C3C;
-                color: white;
+                background-color: #ffffff;
+                color: #0f172a;
+                border: 1px solid #cbd5e1;
                 padding: 12px;
-                border-radius: 6px;
+                border-radius: 8px;
                 font-size: 13px;
+                font-weight: 600;
                 text-align: left;
             }
-            QPushButton:hover { background-color: #505050; }
+            QPushButton:hover {
+                background-color: #f8fafc;
+                border-color: #2563eb;
+                color: #2563eb;
+            }
         """
 
         btn_find_patient = QPushButton("🔍  Find Patient")
@@ -11946,8 +11952,8 @@ class PDFViewer(QMainWindow):
             QGroupBox {
                 font-size: 14px;
                 font-weight: bold;
-                color: #ffffff;
-                border: 1px solid #555;
+                color: #0f172a;
+                border: 1px solid #e2e8f0;
                 border-radius: 8px;
                 margin-top: 10px;
                 padding-top: 10px;
