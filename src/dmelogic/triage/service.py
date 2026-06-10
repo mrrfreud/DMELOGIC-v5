@@ -109,6 +109,10 @@ class TriageService:
     # ── routing ─────────────────────────────────────────────────────────
     def move_to_bucket(self, doc: Document, bucket: Bucket) -> Document:
         dest_dir = self._resolve_bucket_folder(bucket)
+        # A–Z filing: drop into a per-last-name letter subfolder (keeps each
+        # folder small, so lookups stay fast even with a large archive).
+        if bucket.letter_filing:
+            dest_dir = dest_dir / self._letter_for(doc)
         dest_dir.mkdir(parents=True, exist_ok=True)
         src = Path(doc.current_path)
         dst = dest_dir / src.name
@@ -122,6 +126,9 @@ class TriageService:
         except OSError as e:
             logger.warning("Move failed %s -> %s: %s", src, dst, e)
             return doc
+        # Remember where it came from so the move can be undone.
+        doc.previous_path = str(src)
+        doc.previous_bucket_id = doc.bucket_id
         doc.current_path = str(dst)
         doc.filename = dst.name
         doc.bucket_id = bucket.id
@@ -129,6 +136,59 @@ class TriageService:
         self.store.update_document(doc)
         self.store.add_event(doc.id, EventType.MOVED, bucket.name, _current_user())
         return doc
+
+    def dismiss(self, doc: Document) -> Document:
+        """Remove a document from the queue WITHOUT moving the file."""
+        doc.dismissed = True
+        self.store.update_document(doc)
+        self.store.add_event(doc.id, EventType.DISMISSED, user=_current_user())
+        return doc
+
+    def undo_last_move(self, doc: Document) -> Document:
+        """Reverse the most recent move, returning the file to where it was."""
+        if not doc.previous_path:
+            return doc
+        prev = Path(doc.previous_path)
+        src = Path(doc.current_path)
+        prev.parent.mkdir(parents=True, exist_ok=True)
+        dst = prev
+        if dst.exists() and dst != src:
+            dst = self._dedupe(dst)
+        try:
+            if src.exists():
+                shutil.move(str(src), str(dst))
+        except OSError as e:
+            logger.warning("Undo move failed: %s", e)
+            return doc
+        restored_bucket = doc.previous_bucket_id
+        detail = ""
+        if restored_bucket is not None:
+            b = self.store.get_bucket(restored_bucket)
+            detail = f"back to {b.name}" if b else ""
+        else:
+            detail = "back to New Rx"
+        doc.current_path = str(dst)
+        doc.filename = dst.name
+        doc.bucket_id = restored_bucket
+        doc.status = "New" if restored_bucket is None else doc.status
+        doc.previous_path = None
+        doc.previous_bucket_id = None
+        self.store.update_document(doc)
+        self.store.add_event(doc.id, EventType.UNDONE, detail, _current_user())
+        return doc
+
+    @staticmethod
+    def _letter_for(doc: Document) -> str:
+        """First letter of the last name for A–Z filing.
+
+        Files are renamed to ``LAST, FIRST …`` so the first alphabetic character
+        of the filename is the last-name initial. Non-alphabetic → ``#``.
+        """
+        name = (doc.filename or "").lstrip()
+        for ch in name:
+            if ch.isalpha():
+                return ch.upper()
+        return "#"
 
     def reopen(self, doc: Document) -> Document:
         """Pull a document back into the New Rx inbox."""

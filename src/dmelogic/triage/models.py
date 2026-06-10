@@ -16,6 +16,8 @@ class EventType(str, Enum):
     LINKED = "linked"        # linked to a patient/order
     UNLINKED = "unlinked"    # link removed
     REOPENED = "reopened"    # pulled back into the New Rx queue
+    DISMISSED = "dismissed"  # removed from the queue without moving the file
+    UNDONE = "undone"        # last move was reversed
 
 
 @dataclass
@@ -32,6 +34,7 @@ class Bucket:
     color: str = "#0d9488"      # accent for the UI chip
     sort_order: int = 0
     is_active: bool = True
+    letter_filing: bool = False  # file into an A–Z subfolder by last name
 
     def effective_status(self) -> str:
         return self.status.strip() or self.name.strip()
@@ -49,10 +52,13 @@ class Document:
     order_id: Optional[int] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+    dismissed: bool = False              # removed from the queue without moving
+    previous_path: Optional[str] = None      # for Undo: where the file came from
+    previous_bucket_id: Optional[int] = None  # for Undo: prior bucket (None=inbox)
 
     @property
     def is_in_inbox(self) -> bool:
-        return self.bucket_id is None
+        return self.bucket_id is None and not self.dismissed
 
     @property
     def is_linked(self) -> bool:
@@ -79,5 +85,7 @@ class DocumentEvent:
             EventType.LINKED: f"Linked to {self.detail}",
             EventType.UNLINKED: f"Unlinked {self.detail}".rstrip(),
             EventType.REOPENED: "Reopened into New Rx",
+            EventType.DISMISSED: "Dismissed from queue (file left in place)",
+            EventType.UNDONE: f"Undid move{(' — ' + self.detail) if self.detail else ''}",
         }.get(self.type, self.detail or self.type.value)
         return text

@@ -269,8 +269,19 @@ class TriageWidget(QWidget):
             btn.clicked.connect(lambda _=False, bucket=b: self._move_to(bucket))
             self.routing_layout.addWidget(btn)
         reopen = QPushButton("↩ Back to New Rx")
+        reopen.setProperty("flat", True)
         reopen.clicked.connect(self._reopen)
         self.routing_layout.addWidget(reopen)
+
+        undo = QPushButton("↶ Undo last move")
+        undo.setProperty("flat", True)
+        undo.clicked.connect(self._undo)
+        self.routing_layout.addWidget(undo)
+
+        dismiss = QPushButton("✕ Dismiss (leave file in place)")
+        dismiss.setProperty("flat", True)
+        dismiss.clicked.connect(self._dismiss)
+        self.routing_layout.addWidget(dismiss)
 
     # ── selection ───────────────────────────────────────────────────────
     def _on_location_changed(self, *_):
@@ -355,6 +366,29 @@ class TriageWidget(QWidget):
             return
         self._current_doc = self.svc.move_to_bucket(self._current_doc, bucket)
         self.refresh(keep_selection=True)
+
+    def _undo(self):
+        if not self._current_doc:
+            return
+        if not self._current_doc.previous_path:
+            QMessageBox.information(self, "Undo", "Nothing to undo for this document.")
+            return
+        self._current_doc = self.svc.undo_last_move(self._current_doc)
+        self.refresh(keep_selection=True)
+
+    def _dismiss(self):
+        if not self._current_doc:
+            return
+        resp = QMessageBox.question(
+            self, "Dismiss document",
+            "Remove this document from the queue?\n\n"
+            "The file is left exactly where it is — only its place in the "
+            "triage queue is cleared.",
+        )
+        if resp == QMessageBox.StandardButton.Yes:
+            self.svc.dismiss(self._current_doc)
+            self._current_doc = None
+            self.refresh()
 
     def _reopen(self):
         if not self._current_doc:

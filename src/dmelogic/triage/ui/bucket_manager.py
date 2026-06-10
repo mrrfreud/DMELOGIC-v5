@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QColorDialog, QDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+    QCheckBox, QColorDialog, QDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMessageBox, QPushButton, QVBoxLayout, QWidget,
 )
 
@@ -56,6 +56,12 @@ class BucketManagerDialog(QDialog):
         color_row.addWidget(self.color_swatch)
         color_row.addStretch()
         editor.addLayout(color_row)
+
+        self.letter_filing_cb = QCheckBox("File into A–Z subfolder by last name")
+        self.letter_filing_cb.setToolTip(
+            "When on, documents routed here are filed into a per-last-name letter "
+            "subfolder (e.g. SMITH → …\\S\\). Keeps each folder small and lookups fast.")
+        editor.addWidget(self.letter_filing_cb)
 
         self.save_btn = QPushButton("Save changes")
         self.save_btn.clicked.connect(self._save_current)
@@ -106,6 +112,7 @@ class BucketManagerDialog(QDialog):
         self.status_edit.setText(b.status)
         self.folder_edit.setText(b.folder)
         self._set_swatch(b.color)
+        self.letter_filing_cb.setChecked(b.letter_filing)
 
     # ── actions ─────────────────────────────────────────────────────────
     def _add(self):
@@ -144,6 +151,7 @@ class BucketManagerDialog(QDialog):
         b.status = self.status_edit.text().strip()
         b.folder = self.folder_edit.text().strip() or b.folder
         b.color = self._current_color
+        b.letter_filing = self.letter_filing_cb.isChecked()
         self.store.update_bucket(b)
         self.reload()
 
