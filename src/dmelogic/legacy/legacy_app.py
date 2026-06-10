@@ -245,31 +245,21 @@ except Exception:
     SETTINGS_FILE = "settings.json"
 
 
-# Centralized, user-writable default database folder
+# Default database folder — the canonical data-root Databases folder, so the
+# legacy layer keeps everything under one data root (no DmeSolutionsV1 path).
 def _default_db_folder() -> str:
-    """Return the default data directory for databases.
-
-    New default: C:\\Users\\pharmacy\\Documents\\DmeSolutionsV1\\Data
-    Fallbacks: User Documents, then a local ./Data folder.
-    """
-    preferred = r"C:\\Users\\pharmacy\\Documents\\DmeSolutionsV1\\Data"
+    """Return the default data directory for databases (data_root/Databases)."""
     try:
-        os.makedirs(preferred, exist_ok=True)
-        return preferred
+        from dmelogic.config import _default_db_folder as _v5_db_folder
+        return _v5_db_folder()
     except Exception:
-        # Fallback to user's Documents
+        _pd = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
+        fallback = os.path.join(_pd, "DMELogic", "Databases")
         try:
-            user_docs = os.path.join(os.path.expanduser("~"), "Documents", "DmeSolutionsV1", "Data")
-            os.makedirs(user_docs, exist_ok=True)
-            return user_docs
+            os.makedirs(fallback, exist_ok=True)
         except Exception:
-            # Last resort: local app folder
-            fallback = os.path.abspath(os.path.join(os.getcwd(), "Data"))
-            try:
-                os.makedirs(fallback, exist_ok=True)
-            except Exception:
-                pass
-            return fallback
+            pass
+        return fallback
 
 
 # Backups: store in a user-writable location to avoid permission errors
