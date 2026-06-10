@@ -12297,65 +12297,28 @@ class PDFViewer(QMainWindow):
             self.dash_alerts_list.addItem(item)
 
     def _append_ocr_alerts(self):
-        """Append OCR folder insights to the alerts list."""
+        """Show the New Rx triage queue count (prescriptions awaiting triage)."""
         try:
-            folder = getattr(self, "folder_path", DEFAULT_FOLDER_PATH)
-            if not folder:
-                return
-
-            if not os.path.isdir(folder):
-                warning = QListWidgetItem("⚠️ OCR folder not found. Update folder selection to resume previews.")
-                warning.setForeground(QColor("#e67e22"))
-                warning.setData(Qt.ItemDataRole.UserRole, {"type": "ocr_summary", "folder": folder})
-                self.dash_alerts_list.addItem(warning)
-                return
-
+            from dmelogic.triage.service import new_rx_folder
+            folder = new_rx_folder()
             allowed_ext = {".pdf", ".tif", ".tiff", ".jpg", ".jpeg", ".png"}
-            entries: list[tuple[Path, float]] = []
-            folder_path = Path(folder)
-            for child in folder_path.iterdir():
-                if not child.is_file():
-                    continue
-                if allowed_ext and child.suffix.lower() not in allowed_ext:
-                    continue
-                try:
-                    entries.append((child, child.stat().st_mtime))
-                except Exception:
-                    continue
+            count = 0
+            try:
+                for child in folder.iterdir():
+                    if child.is_file() and child.suffix.lower() in allowed_ext:
+                        count += 1
+            except Exception:
+                pass
 
-            entries.sort(key=lambda item: item[1], reverse=True)
-            total = len(entries)
-            folder_name = folder_path.name or str(folder_path)
-            file_label = "file" if total == 1 else "files"
-            summary_text = f"📂 {total} OCR {file_label} awaiting review in {folder_name}"
-
-            summary = QListWidgetItem(summary_text)
-            summary.setForeground(QColor("#00bcd4" if total else "#90a4ae"))
-            summary.setData(Qt.ItemDataRole.UserRole, {"type": "ocr_summary", "folder": str(folder_path)})
-            self.dash_alerts_list.addItem(summary)
-
-            if total == 0:
-                return
-
-            preview_limit = 5
-            for path_obj, mtime in entries[:preview_limit]:
-                age = self._format_relative_age(datetime.fromtimestamp(mtime))
-                item = QListWidgetItem(f"   • {path_obj.name} • {age}")
-                item.setData(
-                    Qt.ItemDataRole.UserRole,
-                    {"type": "ocr_file", "folder": str(folder_path), "file": str(path_obj)}
-                )
-                item.setForeground(QColor("#cfd8dc"))
-                self.dash_alerts_list.addItem(item)
-
-            remaining = total - preview_limit
-            if remaining > 0:
-                more = QListWidgetItem(f"   • +{remaining} more file{'s' if remaining != 1 else ''}")
-                more.setForeground(QColor("#90a4ae"))
-                more.setData(Qt.ItemDataRole.UserRole, {"type": "ocr_summary", "folder": str(folder_path)})
-                self.dash_alerts_list.addItem(more)
+            label = "prescription" if count == 1 else "prescriptions"
+            text = (f"📥 {count} new {label} in New Rx" if count
+                    else "📥 New Rx is clear — no prescriptions waiting")
+            item = QListWidgetItem(text)
+            item.setForeground(QColor("#2563eb" if count else "#90a4ae"))
+            item.setData(Qt.ItemDataRole.UserRole, {"type": "new_rx"})
+            self.dash_alerts_list.addItem(item)
         except Exception as e:
-            print(f"OCR alerts error: {e}")
+            print(f"New Rx alert error: {e}")
 
     def _dash_handle_alert_click(self, item):
         """Handle double-click on an alert to navigate to relevant section."""
@@ -12365,7 +12328,11 @@ class PDFViewer(QMainWindow):
                 return
             
             alert_type = alert_data.get("type")
-            
+
+            if alert_type == "new_rx":
+                self._focus_document_viewer_tab()  # redirects to the New Rx tab
+                return
+
             if alert_type == "tasks":
                 # Navigate to Tasks tab
                 for i in range(self.main_tabs.count()):
