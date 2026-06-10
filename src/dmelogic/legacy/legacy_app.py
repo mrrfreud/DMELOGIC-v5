@@ -11567,9 +11567,10 @@ class PDFViewer(QMainWindow):
         # attributes) but hide its tab and surface the modern triage screen.
         try:
             from dmelogic.triage.ui.triage_widget import TriageWidget
+            from dmelogic.triage.service import intake_folder_name
             self._new_rx_tab = TriageWidget()
             doc_idx = self.main_tabs.indexOf(doc_tab)
-            self.main_tabs.insertTab(doc_idx, self._new_rx_tab, "New Rx")
+            self.main_tabs.insertTab(doc_idx, self._new_rx_tab, intake_folder_name())
             self.main_tabs.setTabVisible(self.main_tabs.indexOf(doc_tab), False)
             debug_log(f"[New Rx] triage tab inserted at index {doc_idx}; "
                       f"Document Viewer hidden. tab count={self.main_tabs.count()}")
@@ -12289,8 +12290,9 @@ class PDFViewer(QMainWindow):
     def _append_ocr_alerts(self):
         """Show the New Rx triage queue count (prescriptions awaiting triage)."""
         try:
-            from dmelogic.triage.service import new_rx_folder
+            from dmelogic.triage.service import new_rx_folder, intake_folder_name
             folder = new_rx_folder()
+            name = intake_folder_name()
             allowed_ext = {".pdf", ".tif", ".tiff", ".jpg", ".jpeg", ".png"}
             count = 0
             try:
@@ -12301,8 +12303,8 @@ class PDFViewer(QMainWindow):
                 pass
 
             label = "prescription" if count == 1 else "prescriptions"
-            text = (f"📥 {count} new {label} in New Rx" if count
-                    else "📥 New Rx is clear — no prescriptions waiting")
+            text = (f"📥 {count} new {label} in {name}" if count
+                    else f"📥 {name} is clear — no prescriptions waiting")
             item = QListWidgetItem(text)
             item.setForeground(QColor("#2563eb" if count else "#90a4ae"))
             item.setData(Qt.ItemDataRole.UserRole, {"type": "new_rx"})

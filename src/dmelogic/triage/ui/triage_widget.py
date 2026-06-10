@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
 )
 
 from dmelogic.triage.models import Document
-from dmelogic.triage.service import TriageService, new_rx_folder
+from dmelogic.triage.service import TriageService, new_rx_folder, intake_folder_name
 from dmelogic.triage.ui.bucket_manager import BucketManagerDialog
 from dmelogic.triage.ui.viewer import DocumentViewer
 
@@ -99,7 +99,7 @@ class TriageWidget(QWidget):
         header = QHBoxLayout()
         title_block = QVBoxLayout()
         title_block.setSpacing(0)
-        title = QLabel("New Rx")
+        title = QLabel(intake_folder_name())
         title.setStyleSheet("font-size:20px; font-weight:800; color:#0f172a;")
         subtitle = QLabel("Review incoming prescriptions, route them, and track what's happening")
         subtitle.setStyleSheet("color:#64748b; font-size:11px;")
@@ -239,7 +239,7 @@ class TriageWidget(QWidget):
         self.locations.blockSignals(True)
         self.locations.clear()
 
-        inbox_item = QListWidgetItem(f"📥  New Rx  ({counts.get(None, 0)})")
+        inbox_item = QListWidgetItem(f"📥  {intake_folder_name()}  ({counts.get(None, 0)})")
         inbox_item.setData(Qt.ItemDataRole.UserRole, _INBOX_KEY)
         self.locations.addItem(inbox_item)
 

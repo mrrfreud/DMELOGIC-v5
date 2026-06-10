@@ -25,10 +25,32 @@ _IGNORED_NAMES_PREFIX = (".", "~$")
 _VIEWABLE_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".gif"}
 
 
+def intake_folder_name() -> str:
+    """The configured intake folder name (settings ``intake_folder``).
+
+    Defaults to ``New Rx``. Set ``intake_folder`` in settings.json to rename it
+    (e.g. ``NEW ORDERS``) — may be a plain name (under the data root) or a full
+    path.
+    """
+    try:
+        from dmelogic.settings import load_settings
+        name = (load_settings().get("intake_folder") or "").strip()
+        if name:
+            return name
+    except Exception:
+        pass
+    return "New Rx"
+
+
 def new_rx_folder() -> Path:
     """The intake folder where prescriptions arrive (faxed/scanned/pasted)."""
-    from dmelogic.config import data_subdir
-    return data_subdir("New Rx")
+    from dmelogic.config import data_root
+    name = intake_folder_name()
+    p = Path(name)
+    if not p.is_absolute():
+        p = data_root() / p
+    p.mkdir(parents=True, exist_ok=True)
+    return p
 
 
 def _current_user() -> str:
