@@ -11629,18 +11629,18 @@ class PDFViewer(QMainWindow):
         stats_layout = QHBoxLayout()
         stats_layout.setSpacing(15)
 
-        # Stat card style
+        # Stat card style (modern light card)
         card_style = """
             QFrame {
-                background-color: #3C3C3C;
-                border-radius: 10px;
+                background-color: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 12px;
                 padding: 12px 18px;
             }
             QFrame:hover {
-                background-color: #454545;
-                cursor: pointer;
+                border: 1px solid #2563eb;
             }
-            QLabel { color: white; }
+            QLabel { color: #0f172a; background: transparent; border: none; }
         """
 
         # Orders This Week card
@@ -11661,7 +11661,7 @@ class PDFViewer(QMainWindow):
         self.dash_orders_week_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         orders_week_card_layout.addWidget(self.dash_orders_week_label)
         orders_week_card_title = QLabel("Orders This Week")
-        orders_week_card_title.setStyleSheet("font-size: 13px; color: #aaaaaa; font-weight: bold;")
+        orders_week_card_title.setStyleSheet("font-size: 13px; color: #64748b; font-weight: bold;")
         orders_week_card_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         orders_week_card_layout.addWidget(orders_week_card_title)
 
@@ -11690,7 +11690,7 @@ class PDFViewer(QMainWindow):
         self.dash_orders_month_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         orders_month_layout.addWidget(self.dash_orders_month_label)
         orders_month_title = QLabel("Orders This Month")
-        orders_month_title.setStyleSheet("font-size: 13px; color: #aaaaaa; font-weight: bold;")
+        orders_month_title.setStyleSheet("font-size: 13px; color: #64748b; font-weight: bold;")
         orders_month_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         orders_month_layout.addWidget(orders_month_title)
 
@@ -11711,13 +11711,13 @@ class PDFViewer(QMainWindow):
         orders_card_layout.setSpacing(4)
         orders_card_layout.setContentsMargins(10, 12, 10, 12)
         self.dash_unbilled_label = QLabel("0")
-        self.dash_unbilled_label.setStyleSheet("font-size: 36px; font-weight: bold; color: #ADFF2F;")
+        self.dash_unbilled_label.setStyleSheet("font-size: 36px; font-weight: bold; color: #16a34a;")
         self.dash_unbilled_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.dash_unbilled_label.setMinimumHeight(80)
         self.dash_unbilled_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         orders_card_layout.addWidget(self.dash_unbilled_label)
         orders_card_title = QLabel("On Hold")
-        orders_card_title.setStyleSheet("font-size: 13px; color: #aaaaaa; font-weight: bold;")
+        orders_card_title.setStyleSheet("font-size: 13px; color: #64748b; font-weight: bold;")
         orders_card_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         orders_card_layout.addWidget(orders_card_title)
 
@@ -11744,7 +11744,7 @@ class PDFViewer(QMainWindow):
         self.dash_patient_orders_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         patient_orders_layout.addWidget(self.dash_patient_orders_label)
         patient_orders_title = QLabel("Patients With Orders")
-        patient_orders_title.setStyleSheet("font-size: 13px; color: #aaaaaa; font-weight: bold;")
+        patient_orders_title.setStyleSheet("font-size: 13px; color: #64748b; font-weight: bold;")
         patient_orders_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         patient_orders_layout.addWidget(patient_orders_title)
 
@@ -11771,7 +11771,7 @@ class PDFViewer(QMainWindow):
         self.dash_patients_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         patients_card_layout.addWidget(self.dash_patients_label)
         patients_card_title = QLabel("Total Patients")
-        patients_card_title.setStyleSheet("font-size: 13px; color: #aaaaaa; font-weight: bold;")
+        patients_card_title.setStyleSheet("font-size: 13px; color: #64748b; font-weight: bold;")
         patients_card_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         patients_card_layout.addWidget(patients_card_title)
 
