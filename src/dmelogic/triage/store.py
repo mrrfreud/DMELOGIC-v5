@@ -83,7 +83,12 @@ class TriageStore:
                     updated_at TEXT,
                     dismissed INTEGER DEFAULT 0,
                     previous_path TEXT,
-                    previous_bucket_id INTEGER
+                    previous_bucket_id INTEGER,
+                    ocr_text TEXT,
+                    ocr_done INTEGER DEFAULT 0,
+                    ocr_quality TEXT,
+                    detected_name TEXT,
+                    detected_dob TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS document_events (
@@ -106,6 +111,11 @@ class TriageStore:
                 ("documents", "dismissed", "ALTER TABLE documents ADD COLUMN dismissed INTEGER DEFAULT 0"),
                 ("documents", "previous_path", "ALTER TABLE documents ADD COLUMN previous_path TEXT"),
                 ("documents", "previous_bucket_id", "ALTER TABLE documents ADD COLUMN previous_bucket_id INTEGER"),
+                ("documents", "ocr_text", "ALTER TABLE documents ADD COLUMN ocr_text TEXT"),
+                ("documents", "ocr_done", "ALTER TABLE documents ADD COLUMN ocr_done INTEGER DEFAULT 0"),
+                ("documents", "ocr_quality", "ALTER TABLE documents ADD COLUMN ocr_quality TEXT"),
+                ("documents", "detected_name", "ALTER TABLE documents ADD COLUMN detected_name TEXT"),
+                ("documents", "detected_dob", "ALTER TABLE documents ADD COLUMN detected_dob TEXT"),
             ):
                 try:
                     conn.execute(ddl)
@@ -210,7 +220,30 @@ class TriageStore:
             dismissed=bool(r["dismissed"]) if "dismissed" in keys else False,
             previous_path=r["previous_path"] if "previous_path" in keys else None,
             previous_bucket_id=r["previous_bucket_id"] if "previous_bucket_id" in keys else None,
+            ocr_done=bool(r["ocr_done"]) if "ocr_done" in keys else False,
+            ocr_quality=(r["ocr_quality"] or "") if "ocr_quality" in keys else "",
+            detected_name=(r["detected_name"] or "") if "detected_name" in keys else "",
+            detected_dob=(r["detected_dob"] or "") if "detected_dob" in keys else "",
         )
+
+    def set_ocr(self, doc_id: int, text: str, quality: str,
+                name: str = "", dob: str = "") -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE documents SET ocr_text=?, ocr_done=1, ocr_quality=?, "
+                "detected_name=?, detected_dob=? WHERE id=?",
+                (text, quality, name, dob, doc_id),
+            )
+            conn.commit()
+
+    def pending_ocr(self) -> list[tuple[int, str]]:
+        """(id, current_path) for non-dismissed documents not yet OCR'd."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, current_path FROM documents "
+                "WHERE COALESCE(ocr_done, 0) = 0 AND COALESCE(dismissed, 0) = 0"
+            ).fetchall()
+            return [(r["id"], r["current_path"]) for r in rows]
 
     def get_document(self, doc_id: int) -> Optional[Document]:
         with self._connect() as conn:
@@ -263,10 +296,12 @@ class TriageStore:
         if search.strip():
             like = f"%{search.strip()}%"
             clauses.append(
-                "(d.filename LIKE ? OR d.status LIKE ? OR d.id IN "
-                "(SELECT document_id FROM document_events WHERE detail LIKE ?))"
+                "(d.filename LIKE ? OR d.status LIKE ? "
+                "OR COALESCE(d.ocr_text,'') LIKE ? "
+                "OR COALESCE(d.detected_name,'') LIKE ? "
+                "OR d.id IN (SELECT document_id FROM document_events WHERE detail LIKE ?))"
             )
-            params += [like, like, like]
+            params += [like, like, like, like, like]
         q = "SELECT d.* FROM documents d"
         if clauses:
             q += " WHERE " + " AND ".join(clauses)

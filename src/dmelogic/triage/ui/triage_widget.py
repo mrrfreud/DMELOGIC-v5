@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QThread
 from PyQt6.QtWidgets import (
     QAbstractItemView, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMenu, QMessageBox, QPushButton, QSplitter,
@@ -232,6 +232,43 @@ class TriageWidget(QWidget):
         self._refresh_locations()
         self._refresh_doc_list(keep_selection=keep_selection)
         self._refresh_routing_buttons()
+        if scan:
+            self._start_ocr_if_needed()
+
+    # ── background OCR ──────────────────────────────────────────────────
+    def _start_ocr_if_needed(self) -> None:
+        """OCR any new documents in the background (text search + auto-read)."""
+        if getattr(self, "_ocr_thread", None) is not None and self._ocr_thread.isRunning():
+            return
+        try:
+            jobs = self.svc.store.pending_ocr()
+        except Exception:
+            jobs = []
+        if not jobs:
+            return
+        from dmelogic.triage.ocr import OcrWorker
+        self._ocr_thread = QThread(self)
+        self._ocr_worker = OcrWorker(jobs)
+        self._ocr_worker.moveToThread(self._ocr_thread)
+        self._ocr_thread.started.connect(self._ocr_worker.run)
+        self._ocr_worker.one_done.connect(self._on_ocr_done)
+        self._ocr_worker.finished.connect(self._ocr_thread.quit)
+        self._ocr_thread.start()
+
+    def _on_ocr_done(self, doc_id: int, result: dict) -> None:
+        try:
+            self.svc.store.set_ocr(
+                doc_id, result.get("text", ""), result.get("quality", ""),
+                result.get("name", ""), result.get("dob", ""),
+            )
+        except Exception as e:
+            logger.warning("save OCR result failed: %s", e)
+            return
+        # Refresh labels (badges) and the selected document's details.
+        self._refresh_doc_list(keep_selection=True)
+        if self._current_doc and self._current_doc.id == doc_id:
+            self._current_doc = self.svc.store.get_document(doc_id)
+            self._show_doc(self._current_doc)
 
     def _refresh_locations(self) -> None:
         counts = self.svc.counts()
@@ -279,13 +316,26 @@ class TriageWidget(QWidget):
         else:
             docs = self.svc.in_bucket(self._location)
 
+        from dmelogic.triage.ocr import quality_badge, GOOD, FAIR
+        from PyQt6.QtGui import QColor
         self.doc_list.blockSignals(True)
         self.doc_list.clear()
         for d in docs:
-            item = QListWidgetItem(d.filename)
+            # Flag low-confidence / unreadable scans (strict OCR) in the label.
+            prefix = ""
+            if d.ocr_done and d.ocr_quality not in (GOOD, FAIR, ""):
+                prefix = "⚠  "
+            item = QListWidgetItem(prefix + d.filename)
             item.setData(Qt.ItemDataRole.UserRole, d.id)
-            tip = d.status + (f"  •  linked" if d.is_linked else "")
+            badge = quality_badge(d.ocr_quality) if d.ocr_done else "OCR pending…"
+            tip = f"{d.status}  •  {badge}"
+            if d.is_linked:
+                tip += "  •  linked"
+            if d.detected_name:
+                tip += f"  •  read: {d.detected_name}" + (f" (DOB {d.detected_dob})" if d.detected_dob else "")
             item.setToolTip(tip)
+            if prefix:
+                item.setForeground(QColor("#b45309"))
             self.doc_list.addItem(item)
         self.doc_list.blockSignals(False)
 
@@ -379,7 +429,17 @@ class TriageWidget(QWidget):
         self._set_details_enabled(True)
         self.viewer.load(doc.current_path)
         self.detail_name.setText(doc.filename)
-        self.detail_status.setText(f"Status: {doc.status}")
+        from dmelogic.triage.ocr import quality_badge
+        status_line = f"Status: {doc.status}"
+        if doc.ocr_done:
+            status_line += f"   ·   OCR: {quality_badge(doc.ocr_quality)}"
+            if doc.detected_name:
+                status_line += f"   ·   read: {doc.detected_name}"
+                if doc.detected_dob:
+                    status_line += f" (DOB {doc.detected_dob})"
+        else:
+            status_line += "   ·   OCR pending…"
+        self.detail_status.setText(status_line)
         if doc.is_linked:
             bits = []
             if doc.patient_id is not None:
@@ -408,8 +468,14 @@ class TriageWidget(QWidget):
     def _rename(self):
         if not self._current_doc:
             return
+        # Suggest a name read from the document (OCR), falling back to current.
+        suggestion = self._current_doc.filename
+        if self._current_doc.detected_name:
+            suggestion = self._current_doc.detected_name
+            if self._current_doc.detected_dob:
+                suggestion += f" ({self._current_doc.detected_dob})"
         new, ok = QInputDialog.getText(
-            self, "Rename document", "New file name:", text=self._current_doc.filename
+            self, "Rename document", "New file name:", text=suggestion
         )
         if ok and new.strip():
             self.viewer.release()  # free the handle so the rename can succeed
@@ -483,9 +549,10 @@ class TriageWidget(QWidget):
     def _link_patient(self):
         if not self._current_doc:
             return
-        # Pre-fill the search with the last name parsed from the filename
-        # ("LAST, FIRST …") so the right patient is usually one click away.
-        guess = (self._current_doc.filename or "").split(",")[0].strip()
+        # Pre-fill the search with the OCR-read name (or the filename's last
+        # name) so the right patient is usually one click away.
+        source = self._current_doc.detected_name or self._current_doc.filename or ""
+        guess = source.split(",")[0].strip()
         from dmelogic.triage.ui.patient_picker import PatientPickerDialog
         dlg = PatientPickerDialog(self, initial=guess)
         if dlg.exec() and dlg.selected_patient():

@@ -56,6 +56,10 @@ class Document:
     dismissed: bool = False              # removed from the queue without moving
     previous_path: Optional[str] = None      # for Undo: where the file came from
     previous_bucket_id: Optional[int] = None  # for Undo: prior bucket (None=inbox)
+    ocr_done: bool = False               # OCR has been attempted
+    ocr_quality: str = ""                # good / fair / low / failed
+    detected_name: str = ""              # patient name read from the document
+    detected_dob: str = ""               # DOB read from the document
 
     @property
     def is_in_inbox(self) -> bool:
