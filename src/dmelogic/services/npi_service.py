@@ -48,8 +48,17 @@ class NPILookupService:
             db_path: Path to SQLite database for caching (defaults to npi_cache.db)
         """
         if db_path is None:
-            db_path = "npi_cache.db"
-        
+            # Cache must live in the writable data root — NOT a relative path,
+            # which would land in the (read-only) install dir for an installed
+            # build and fail with "unable to open database file".
+            try:
+                from dmelogic.paths import db_dir
+                db_path = db_dir() / "npi_cache.db"
+            except Exception:
+                import os
+                base = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
+                db_path = Path(base) / "DMELogic" / "Databases" / "npi_cache.db"
+
         self.db_path = Path(db_path)
         self._ensure_cache_db()
     
