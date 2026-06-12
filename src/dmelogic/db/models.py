@@ -43,6 +43,30 @@ class OrderStatus(str, Enum):
     CLOSED = "Closed"
 
 
+# Statuses that count as "supplied / revenue-eligible" for financial reports
+# (revenue, profit, order financials). An order only contributes to financial
+# totals once it has actually gone to the patient or had revenue recognized.
+# Everything else (Pending, Submitted, Approved, Ready, Docs Needed, Unbilled,
+# On Hold, Denied, Cancelled, Pending Approval, …) is excluded.
+REVENUE_STATUSES: frozenset[str] = frozenset({
+    OrderStatus.DELIVERED.value,
+    OrderStatus.PICKED_UP.value,
+    OrderStatus.SHIPPED.value,
+    OrderStatus.BILLED.value,
+    OrderStatus.PAID.value,
+})
+
+
+def revenue_status_sql(column: str = "order_status") -> str:
+    """Return a SQL boolean expression that's true for revenue-eligible orders.
+
+    Example:
+        WHERE {revenue_status_sql('o.order_status')}
+    """
+    quoted = ", ".join(f"'{s}'" for s in sorted(REVENUE_STATUSES))
+    return f"COALESCE({column}, '') IN ({quoted})"
+
+
 class BillingType(str, Enum):
     """Billing selection types."""
     INSURANCE = "Insurance"

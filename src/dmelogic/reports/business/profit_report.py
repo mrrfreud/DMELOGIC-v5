@@ -3,6 +3,7 @@ from typing import List, Dict, Any
 from PyQt6.QtWidgets import QDialog, QVBoxLayout
 from dmelogic.reports.base import ReportEngine, ReportColumn, ReportRow
 from dmelogic.reports.ui import ReportViewer
+from dmelogic.db.models import revenue_status_sql
 
 
 class ProfitReportEngine(ReportEngine):
@@ -36,7 +37,7 @@ class ProfitReportEngine(ReportEngine):
         # Keep status filtering in UI so "Generate" can show all today orders by default.
         rows = self.execute_query(
             "orders.db",
-            """
+            f"""
             SELECT o.id as order_number,
                    COALESCE(o.order_date, o.created_date) as order_date,
                    COALESCE(o.patient_name,
@@ -47,6 +48,7 @@ class ProfitReportEngine(ReportEngine):
                    CAST(COALESCE(oi.total, 0) AS REAL) as line_total
             FROM orders o
             JOIN order_items oi ON oi.order_id = o.id
+            WHERE {revenue_status_sql('o.order_status')}
             ORDER BY o.id DESC
             """
         )

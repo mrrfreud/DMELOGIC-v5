@@ -292,7 +292,8 @@ class OrderWizard(QDialog):
             Qt.WindowType.WindowCloseButtonHint
         )
         
-        self.resize(900, 600)
+        self.resize(1120, 640)
+        self.setMinimumSize(900, 560)
 
         # Core patient identification
         self.patient_id = patient_id
@@ -1209,15 +1210,36 @@ class OrderWizard(QDialog):
             """
             QTableWidget {
                 font-size: 10pt;
-                gridline-color: #d0d7de;
+                background: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                gridline-color: #e2e8f0;
+                alternate-background-color: #f8fafc;
+                selection-background-color: #e8f0fe;
+                selection-color: #0f172a;
             }
+            QTableWidget::item { padding: 4px 8px; }
             QHeaderView::section {
                 font-weight: 600;
-                padding: 4px 8px;
-                background-color: #f5f5f5;
+                color: #64748b;
+                padding: 6px 8px;
+                background-color: #f8fafc;
+                border: none;
+                border-bottom: 1px solid #e2e8f0;
             }
             """
         )
+
+        # Cells with an explicit background (the orange "fill me in" tint) ignore
+        # the stylesheet's selection color and fall back to the system palette
+        # highlight (a hard blue that buries the text you're typing). Set the
+        # palette highlight to a soft tint with dark text so cells stay readable
+        # while selected/edited.
+        from PyQt6.QtGui import QPalette
+        _pal = self.items_table.palette()
+        _pal.setColor(QPalette.ColorRole.Highlight, QColor("#e8f0fe"))
+        _pal.setColor(QPalette.ColorRole.HighlightedText, QColor("#0f172a"))
+        self.items_table.setPalette(_pal)
 
         header = self.items_table.horizontalHeader()
         # Keep sensible resize behaviour
@@ -1236,17 +1258,18 @@ class OrderWizard(QDialog):
         # Make sure small fields are wide enough for the spinboxes
         header.setMinimumSectionSize(60)
         try:
-            self.items_table.setColumnWidth(0, 150)  # HCPCS / Item
-            self.items_table.setColumnWidth(1, 260)  # Description
+            self.items_table.setColumnWidth(0, 200)  # HCPCS / Item (room for full codes)
+            self.items_table.setColumnWidth(1, 280)  # Description
             self.items_table.setColumnWidth(2, 70)   # Qty
             self.items_table.setColumnWidth(3, 70)   # Refills
             self.items_table.setColumnWidth(4, 70)   # Days
-            self.items_table.setColumnWidth(5, 260)  # Directions
+            self.items_table.setColumnWidth(5, 280)  # Directions
         except Exception:
             pass
 
-        # Slightly taller rows so everything breathes
-        self.items_table.verticalHeader().setDefaultSectionSize(28)
+        # Taller rows so the inputs and text aren't cramped.
+        self.items_table.verticalHeader().setDefaultSectionSize(34)
+        self.items_table.setWordWrap(False)
 
         # React when the HCPCS cell changes
         self.items_table.itemChanged.connect(self._on_item_cell_changed)

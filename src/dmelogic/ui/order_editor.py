@@ -72,6 +72,7 @@ from dmelogic.prescriber_lookup_dialog import PrescriberLookupDialog
 from dmelogic.refill_service import process_refill, RefillError
 from dmelogic.ui.components.sticky_notes_panel import StickyNotesPanel
 from dmelogic.ui.reorder_dialog import ReorderConfirmationDialog
+from dmelogic.ui.dictation import enable_dictation
 from dmelogic.reserved_rx_manager import ReservedRxPanel, handle_last_refill, get_reserved_rx_data
 
 
@@ -472,6 +473,7 @@ class OrderEditorDialog(QDialog):
         self.doctor_directions = QTextEdit()
         self.doctor_directions.setMaximumHeight(80)
         self.doctor_directions.setPlaceholderText("Enter doctor directions...")
+        enable_dictation(self.doctor_directions)
         layout.addRow("Doctor Directions:", self.doctor_directions)
         
         return group
@@ -559,27 +561,30 @@ class OrderEditorDialog(QDialog):
         self.notes_text = QTextEdit()
         self.notes_text.setMaximumHeight(100)
         self.notes_text.setPlaceholderText("Enter order notes...")
+        enable_dictation(self.notes_text)
         layout.addWidget(self.notes_text)
-        
+
         # Special Instructions for delivery
         instructions_label = QLabel("Special Instructions (for delivery):")
         instructions_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
         layout.addWidget(instructions_label)
-        
+
         self.special_instructions_text = QTextEdit()
         self.special_instructions_text.setMaximumHeight(80)
         self.special_instructions_text.setPlaceholderText("Enter delivery instructions for the driver...")
+        enable_dictation(self.special_instructions_text)
         layout.addWidget(self.special_instructions_text)
-        
+
         # Billing Alert (popup note shown when EPACES helper opens)
         alert_label = QLabel("Billing Alert (popup when EPACES opens):")
         alert_label.setStyleSheet("font-weight: bold; margin-top: 10px; color: #d63384;")
         layout.addWidget(alert_label)
-        
+
         self.epaces_alert_text = QTextEdit()
         self.epaces_alert_text.setMaximumHeight(60)
         self.epaces_alert_text.setPlaceholderText("Optional: leave a note for the biller (e.g. 'Call patient before billing')...")
         self.epaces_alert_text.setStyleSheet("border: 1px solid #d63384; border-radius: 4px;")
+        enable_dictation(self.epaces_alert_text)
         layout.addWidget(self.epaces_alert_text)
         
         return group

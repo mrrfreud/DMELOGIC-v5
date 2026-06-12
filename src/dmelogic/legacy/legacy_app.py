@@ -2289,7 +2289,7 @@ class NewOrderDialog(QDialog):
         # Status (moved to row 2)
         order_info_layout.addWidget(QLabel("Status:"), 2, 0)
         self.status_combo = QComboBox()
-        self.status_combo.addItems(["Unbilled", "Pending", "Processing", "Ready", "Picked Up", "Shipped", "Delivered", "Cancelled"])
+        self.status_combo.addItems(["Unbilled", "Pending", "Processing", "Ready", "Picked Up", "Shipped", "Delivered", "Denied", "Cancelled"])
         order_info_layout.addWidget(self.status_combo, 2, 1)
         
         # Priority
@@ -35171,7 +35171,7 @@ class PDFViewer(QMainWindow):
 
             range_count = len(per_order)  # Number of orders, not rows
 
-            status_list = ["Pending", "Ready", "Picked Up", "Delivered", "Cancelled"]
+            status_list = ["Pending", "Ready", "Picked Up", "Delivered", "Denied", "Cancelled"]
             status_counts = {}
             try:
                 if date_clause:

@@ -32,6 +32,7 @@ STATUS_TRANSITIONS: dict[OrderStatus, Set[OrderStatus]] = {
         OrderStatus.SHIPPED,
         OrderStatus.UNBILLED,
         OrderStatus.BILLED,
+        OrderStatus.DENIED,
         OrderStatus.CANCELLED,
         OrderStatus.ON_HOLD,
     },
@@ -40,6 +41,7 @@ STATUS_TRANSITIONS: dict[OrderStatus, Set[OrderStatus]] = {
         OrderStatus.READY,
         OrderStatus.PENDING,
         OrderStatus.UNBILLED,
+        OrderStatus.DENIED,
         OrderStatus.CANCELLED,
         OrderStatus.ON_HOLD,
     },
@@ -50,6 +52,7 @@ STATUS_TRANSITIONS: dict[OrderStatus, Set[OrderStatus]] = {
         OrderStatus.DELIVERED,
         OrderStatus.UNBILLED,
         OrderStatus.BILLED,  # allow direct billing when delivery already confirmed offline
+        OrderStatus.DENIED,
         OrderStatus.CANCELLED,
         OrderStatus.ON_HOLD,
     },
@@ -59,6 +62,7 @@ STATUS_TRANSITIONS: dict[OrderStatus, Set[OrderStatus]] = {
         OrderStatus.DELIVERED,
         OrderStatus.UNBILLED,
         OrderStatus.BILLED,
+        OrderStatus.DENIED,
         OrderStatus.CANCELLED,
         OrderStatus.ON_HOLD,
     },
@@ -67,6 +71,7 @@ STATUS_TRANSITIONS: dict[OrderStatus, Set[OrderStatus]] = {
         OrderStatus.DELIVERED,
         OrderStatus.UNBILLED,
         OrderStatus.BILLED,
+        OrderStatus.DENIED,
         OrderStatus.CANCELLED,
         OrderStatus.ON_HOLD,
     },
@@ -77,6 +82,7 @@ STATUS_TRANSITIONS: dict[OrderStatus, Set[OrderStatus]] = {
         OrderStatus.UNBILLED,
         OrderStatus.BILLED,
         OrderStatus.PAID,       # Cash/direct payment
+        OrderStatus.DENIED,
         OrderStatus.CANCELLED,
         OrderStatus.ON_HOLD,
     },
@@ -86,6 +92,7 @@ STATUS_TRANSITIONS: dict[OrderStatus, Set[OrderStatus]] = {
         OrderStatus.BILLED,
         OrderStatus.PAID,       # Cash/direct payment
         OrderStatus.PICKED_UP,
+        OrderStatus.DENIED,
         OrderStatus.CANCELLED,
         OrderStatus.ON_HOLD,
     },
@@ -94,6 +101,7 @@ STATUS_TRANSITIONS: dict[OrderStatus, Set[OrderStatus]] = {
         OrderStatus.UNBILLED,
         OrderStatus.BILLED,
         OrderStatus.PAID,       # Cash/direct payment
+        OrderStatus.DENIED,
         OrderStatus.CANCELLED,
         OrderStatus.ON_HOLD,
     },
@@ -101,6 +109,7 @@ STATUS_TRANSITIONS: dict[OrderStatus, Set[OrderStatus]] = {
     OrderStatus.UNBILLED: {
         OrderStatus.BILLED,
         OrderStatus.PAID,      # Manual payment marking (cash, etc.)
+        OrderStatus.DENIED,
         OrderStatus.ON_HOLD,
         OrderStatus.CANCELLED,
     },
@@ -193,11 +202,10 @@ def can_transition(from_status: OrderStatus, to_status: OrderStatus) -> bool:
     Returns:
         True if transition is allowed by business rules
     """
-    if from_status == to_status:
-        return True  # No-op transitions always allowed
-    
-    allowed_next = STATUS_TRANSITIONS.get(from_status, set())
-    return to_status in allowed_next
+    # Per requirement: any status can change to any other status, regardless of
+    # the current status. The STATUS_TRANSITIONS map is retained only for
+    # reference/ordering, not enforcement.
+    return True
 
 
 def validate_transition(from_status: OrderStatus, to_status: OrderStatus) -> Optional[str]:
@@ -238,7 +246,11 @@ def get_allowed_next_statuses(current_status: OrderStatus) -> Set[OrderStatus]:
     Returns:
         Set of allowed next statuses
     """
-    return STATUS_TRANSITIONS.get(current_status, set()).copy()
+    # Any status is reachable from any status — return every status except the
+    # current one. (PENDING_APPROVAL is an internal agent-intake state and is
+    # not offered as a manual choice.)
+    return {s for s in OrderStatus
+            if s != current_status and s != OrderStatus.PENDING_APPROVAL}
 
 
 def get_status_description(status: OrderStatus) -> str:

@@ -143,7 +143,7 @@ def build_orders_tab(self) -> QWidget:
     self.orders_search_edit.setMinimumWidth(260)
 
     self.orders_status_combo = QComboBox()
-    self.orders_status_combo.addItems(["All statuses", "Unbilled", "On Hold", "Open", "Pending", "Pending Approval", "Shipped", "Delivered", "Cancelled", "RX on File"])
+    self.orders_status_combo.addItems(["All statuses", "Unbilled", "On Hold", "Open", "Pending", "Pending Approval", "Shipped", "Delivered", "Denied", "Cancelled", "RX on File"])
 
     self.orders_date_combo = QComboBox()
     self.orders_date_combo.addItems(["All dates", "This week", "This month", "This year"])

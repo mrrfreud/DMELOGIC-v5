@@ -281,7 +281,8 @@ class OrderVolumeAnalyticsReport(QDialog):
         try:
             conn = sqlite3.connect(str(self.orders_db_path))
             conn.row_factory = sqlite3.Row
-            rows = conn.execute("""
+            from dmelogic.db.models import revenue_status_sql
+            rows = conn.execute(f"""
                 SELECT
                     o.id                                               AS order_id,
                     COALESCE(o.order_date, o.created_date, '')        AS order_date,
@@ -292,6 +293,7 @@ class OrderVolumeAnalyticsReport(QDialog):
                     SUM(CAST(COALESCE(oi.qty, '0') AS INTEGER))        AS qty
                 FROM orders o
                 LEFT JOIN order_items oi ON oi.order_id = o.id
+                WHERE {revenue_status_sql('o.order_status')}
                 GROUP BY o.id
             """).fetchall()
             conn.close()

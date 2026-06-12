@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QDialog, QVBoxLayout, QComboBox
 
 from dmelogic.reports.base import ReportEngine, ReportColumn, ReportRow
 from dmelogic.reports.ui import ReportViewer
+from dmelogic.db.models import revenue_status_sql
 
 
 class OrderReportEngine(ReportEngine):
@@ -75,6 +76,7 @@ class OrderReportEngine(ReportEngine):
                 (SELECT COALESCE(SUM(CAST(total AS REAL)), 0)
                  FROM order_items WHERE order_id = o.id) as total_amount
             FROM orders o
+            WHERE {revenue_status_sql('o.order_status')}
             ORDER BY COALESCE(o.order_date, o.created_date) DESC
             LIMIT 1000
             """
