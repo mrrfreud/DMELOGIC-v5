@@ -122,22 +122,70 @@ class TriageService:
 
     # ── rename ──────────────────────────────────────────────────────────
     def rename_document(self, doc: Document, new_name: str) -> Document:
-        new_name = new_name.strip()
+        """Rename the document's file. Raises a clear error on failure.
+
+        Robust against the three things that used to make renames fail silently:
+        illegal filename characters, the file having moved out from under the DB
+        record, and the file still being locked by the viewer/OCR on Windows.
+        """
+        import re
+
+        new_name = (new_name or "").strip()
         if not new_name:
             return doc
+
+        # Strip characters Windows forbids in a filename, plus trailing dots/
+        # spaces (also illegal as a name ending on Windows).
+        cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", new_name).strip().rstrip(". ")
+        if not cleaned:
+            raise ValueError("That name has no usable characters for a file name.")
+        new_name = cleaned
+
         src = Path(doc.current_path)
         # Preserve the original extension if the user didn't supply one.
         if not Path(new_name).suffix and src.suffix:
             new_name += src.suffix
+
+        # If the tracked file isn't where the DB record points (e.g. it was moved
+        # or the intake folder was renamed), try to find it in the intake folder
+        # before giving up — instead of silently corrupting the record.
+        if not src.exists():
+            candidate = new_rx_folder() / src.name
+            if candidate.exists():
+                src = candidate
+            else:
+                raise FileNotFoundError(
+                    f"The file '{src.name}' is no longer in the intake folder.\n"
+                    "Click Refresh and try again."
+                )
+
         dst = src.with_name(new_name)
         if dst.exists() and dst != src:
             dst = self._dedupe(dst)
-        try:
-            if src.exists():
+
+        # The PDF viewer / OCR can briefly hold the file open on Windows, so a
+        # rename right after viewing may hit a lock. Force a GC and retry a few
+        # times before surfacing the error.
+        import gc
+        import time
+        last_err: OSError | None = None
+        for _ in range(6):
+            try:
                 src.rename(dst)
-        except OSError as e:
-            logger.warning("Rename failed %s -> %s: %s", src, dst, e)
-            return doc
+                last_err = None
+                break
+            except OSError as e:
+                last_err = e
+                gc.collect()
+                time.sleep(0.2)
+        if last_err is not None:
+            logger.warning("Rename failed %s -> %s: %s", src, dst, last_err)
+            raise OSError(
+                "Couldn't rename the file — it may still be open or locked by "
+                "another program.\n\nClose any window showing this PDF and try "
+                f"again.\n\n(Details: {last_err})"
+            )
+
         doc.filename = dst.name
         doc.current_path = str(dst)
         self.store.update_document(doc)

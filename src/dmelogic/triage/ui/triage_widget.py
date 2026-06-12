@@ -480,13 +480,29 @@ class TriageWidget(QWidget):
         if doc.is_linked:
             bits = []
             if doc.patient_id is not None:
-                bits.append(f"patient #{doc.patient_id}")
+                # Show the patient's name (fall back to the id if not found).
+                name = self._patient_display_name(doc.patient_id)
+                bits.append(name or f"patient #{doc.patient_id}")
             if doc.order_id is not None:
                 bits.append(f"order #{doc.order_id}")
             self.detail_link.setText("🔗 " + ", ".join(bits))
         else:
             self.detail_link.setText("Not linked")
         self._refresh_history()
+
+    def _patient_display_name(self, patient_id: int) -> str:
+        """Resolve a patient_id to a 'LAST, FIRST' display name (best-effort)."""
+        try:
+            from dmelogic.db.patients import fetch_patient_by_id
+            row = fetch_patient_by_id(patient_id)
+            if row is None:
+                return ""
+            d = dict(row)
+            last = (d.get("last_name") or "").strip()
+            first = (d.get("first_name") or "").strip()
+            return ", ".join(p for p in (last, first) if p)
+        except Exception:
+            return ""
 
     def _refresh_history(self) -> None:
         self.history_list.clear()
@@ -516,7 +532,11 @@ class TriageWidget(QWidget):
         )
         if ok and new.strip():
             self.viewer.release()  # free the handle so the rename can succeed
-            self._current_doc = self.svc.rename_document(self._current_doc, new)
+            try:
+                self._current_doc = self.svc.rename_document(self._current_doc, new)
+            except Exception as e:
+                # Surface the real reason instead of failing silently.
+                QMessageBox.warning(self, "Rename failed", str(e))
             self.refresh(keep_selection=True)
             self._show_doc(self._current_doc)
 
