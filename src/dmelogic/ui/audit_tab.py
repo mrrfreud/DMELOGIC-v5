@@ -35,13 +35,14 @@ def build_audit_tab(parent) -> QWidget:
     tab = QWidget()
     tab.setObjectName("auditTab")
     tab.setStyleSheet(
-        "#auditTab { background:#f3f5f9; }"
+        "#auditTab { background:#e5eaf1; }"
         # Light cards for the group boxes.
         "#auditTab QGroupBox { background:#ffffff; border:1px solid #e2e8f0;"
-        " border-radius:10px; margin-top:10px; padding-top:10px; font-weight:600;"
+        " border-radius:10px; margin-top:4px; padding-top:26px; font-weight:600;"
         " color:#0f172a; }"
-        "#auditTab QGroupBox::title { subcontrol-origin:margin; left:10px;"
-        " padding:0 8px; color:#475569; }"
+        "#auditTab QGroupBox::title { subcontrol-origin:padding;"
+        " subcontrol-position:top left; left:12px; top:7px;"
+        " padding:0; color:#475569; }"
         # Inputs.
         "#auditTab QComboBox, #auditTab QDateEdit, #auditTab QSpinBox {"
         " background:#ffffff; color:#0f172a; border:1px solid #e2e8f0;"

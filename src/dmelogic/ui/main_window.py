@@ -94,7 +94,7 @@ def build_orders_tab(self) -> QWidget:
     """
     # ── Modern light-theme styling (same original palette as the other tabs) ──
     ACCENT     = "#2563eb"
-    PAGE_BG    = "#f3f5f9"
+    PAGE_BG    = "#e5eaf1"
     SURFACE    = "#ffffff"
     BORDER     = "#e2e8f0"
     TEXT       = "#0f172a"
@@ -375,7 +375,7 @@ def build_patients_tab(self) -> QWidget:
     # Generic design conventions only (light page, white card table, pill
     # search, muted labels). No third-party assets or color sets reproduced.
     ACCENT     = "#2563eb"
-    PAGE_BG    = "#f3f5f9"
+    PAGE_BG    = "#e5eaf1"
     SURFACE    = "#ffffff"
     BORDER     = "#e2e8f0"
     TEXT       = "#0f172a"

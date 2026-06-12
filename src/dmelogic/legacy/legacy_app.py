@@ -11605,7 +11605,7 @@ class PDFViewer(QMainWindow):
         # surfaces — same original palette as the Inventory/Patients tabs.
         dashboard_tab.setObjectName("dashTab")
         dashboard_tab.setStyleSheet(
-            "#dashTab { background:#f3f5f9; }"
+            "#dashTab { background:#e5eaf1; }"
             # Make every group box a white card on the gray page.
             "#dashTab QGroupBox { background:#ffffff; }"
         )
@@ -11819,13 +11819,16 @@ class PDFViewer(QMainWindow):
                 color: #0f172a;
                 border: 1px solid #e2e8f0;
                 border-radius: 8px;
-                margin-top: 10px;
-                padding-top: 10px;
+                margin-top: 4px;
+                padding-top: 26px;
             }
             QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px;
+                subcontrol-origin: padding;
+                subcontrol-position: top left;
+                left: 12px;
+                top: 7px;
+                padding: 0;
+                background: transparent;
             }
         """)
         tasks_group_layout = QVBoxLayout(tasks_group)
@@ -11851,13 +11854,16 @@ class PDFViewer(QMainWindow):
                 color: #0f172a;
                 border: 1px solid #e2e8f0;
                 border-radius: 8px;
-                margin-top: 10px;
-                padding-top: 10px;
+                margin-top: 4px;
+                padding-top: 26px;
             }
             QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px;
+                subcontrol-origin: padding;
+                subcontrol-position: top left;
+                left: 12px;
+                top: 7px;
+                padding: 0;
+                background: transparent;
             }
         """)
         orders_group_layout = QVBoxLayout(orders_group)
@@ -11903,13 +11909,16 @@ class PDFViewer(QMainWindow):
                 color: #0f172a;
                 border: 1px solid #e2e8f0;
                 border-radius: 8px;
-                margin-top: 10px;
-                padding-top: 10px;
+                margin-top: 4px;
+                padding-top: 26px;
             }
             QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px;
+                subcontrol-origin: padding;
+                subcontrol-position: top left;
+                left: 12px;
+                top: 7px;
+                padding: 0;
+                background: transparent;
             }
         """)
         actions_layout = QVBoxLayout(actions_group)
@@ -11974,13 +11983,16 @@ class PDFViewer(QMainWindow):
                 color: #0f172a;
                 border: 1px solid #e2e8f0;
                 border-radius: 8px;
-                margin-top: 10px;
-                padding-top: 10px;
+                margin-top: 4px;
+                padding-top: 26px;
             }
             QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px;
+                subcontrol-origin: padding;
+                subcontrol-position: top left;
+                left: 12px;
+                top: 7px;
+                padding: 0;
+                background: transparent;
             }
         """)
         alerts_layout = QVBoxLayout(alerts_group)
@@ -14664,7 +14676,7 @@ class PDFViewer(QMainWindow):
         prescriber_tab = QWidget()
         prescriber_tab.setObjectName("presTab")
         prescriber_tab.setStyleSheet(
-            "#presTab { background:#f3f5f9; }"
+            "#presTab { background:#e5eaf1; }"
             "#presTab QLineEdit#presSearch { background:#ffffff; color:#0f172a;"
             " border:1px solid #e2e8f0; border-radius:18px; padding:8px 14px; min-width:260px; }"
             "#presTab QLineEdit#presSearch:focus { border-color:#2563eb; }"
@@ -14849,7 +14861,7 @@ class PDFViewer(QMainWindow):
         clinics_tab = QWidget()
         clinics_tab.setObjectName("clinTab")
         clinics_tab.setStyleSheet(
-            "#clinTab { background:#f3f5f9; }"
+            "#clinTab { background:#e5eaf1; }"
             "#clinTab QLineEdit#clinSearch { background:#ffffff; color:#0f172a;"
             " border:1px solid #e2e8f0; border-radius:18px; padding:8px 14px; min-width:260px; }"
             "#clinTab QLineEdit#clinSearch:focus { border-color:#2563eb; }"
@@ -16462,11 +16474,12 @@ class PDFViewer(QMainWindow):
         go_tab = QWidget()
         go_tab.setObjectName("goTab")
         go_tab.setStyleSheet(
-            "#goTab { background:#f3f5f9; }"
+            "#goTab { background:#e5eaf1; }"
             "#goTab QGroupBox { background:#ffffff; border:1px solid #e2e8f0;"
-            " border-radius:10px; margin-top:10px; padding-top:12px; font-weight:600;"
+            " border-radius:10px; margin-top:4px; padding-top:26px; font-weight:600;"
             " color:#475569; }"
-            "#goTab QGroupBox::title { subcontrol-origin:margin; left:10px; padding:0 8px; }"
+            "#goTab QGroupBox::title { subcontrol-origin:padding;"
+            " subcontrol-position:top left; left:12px; top:7px; padding:0; }"
             "#goTab QLineEdit { background:#ffffff; color:#0f172a; border:1px solid #e2e8f0;"
             " border-radius:8px; padding:7px 10px; }"
             "#goTab QLineEdit:focus { border-color:#2563eb; }"
@@ -18341,7 +18354,7 @@ class PDFViewer(QMainWindow):
         # a light page, flat "ghost" buttons, a pill search field).
         ACCENT      = "#2563eb"   # primary action blue
         ACCENT_DK   = "#1d4ed8"
-        PAGE_BG     = "#f3f5f9"   # soft gray page
+        PAGE_BG     = "#e5eaf1"   # soft gray page
         SURFACE     = "#ffffff"   # white cards / table
         BORDER      = "#e2e8f0"   # hairline borders
         BORDER_HOV  = "#cbd5e1"
@@ -18509,7 +18522,7 @@ class PDFViewer(QMainWindow):
         billing_tab = QWidget()
         billing_tab.setObjectName("billTab")
         billing_tab.setStyleSheet(
-            "#billTab { background:#f3f5f9; }"
+            "#billTab { background:#e5eaf1; }"
             "#billTab QComboBox { background:#ffffff; color:#0f172a;"
             " border:1px solid #e2e8f0; border-radius:8px; padding:6px 10px; min-width:140px; }"
             "#billTab QComboBox:hover { border-color:#cbd5e1; }"
@@ -18654,7 +18667,7 @@ class PDFViewer(QMainWindow):
         reports_tab = QWidget()
         reports_tab.setObjectName("repTab")
         reports_tab.setStyleSheet(
-            "#repTab { background:#f3f5f9; }"
+            "#repTab { background:#e5eaf1; }"
             "#repTab QDateEdit { background:#ffffff; color:#0f172a;"
             " border:1px solid #e2e8f0; border-radius:8px; padding:5px 8px; }"
         )
@@ -26029,7 +26042,7 @@ class PDFViewer(QMainWindow):
         # Modern light-theme styling, consistent with the main tabs. Normalizes
         # the inherited label color and gives inputs the white rounded look.
         dialog.setStyleSheet(
-            "QDialog { background:#f3f5f9; }"
+            "QDialog { background:#e5eaf1; }"
             "QLabel { color:#334155; font-weight:600; background:transparent; }"
             "QLineEdit, QComboBox, QTextEdit {"
             " background:#ffffff; color:#0f172a; border:1px solid #e2e8f0;"
@@ -37766,7 +37779,7 @@ class PDFViewer(QMainWindow):
         fee_tab = QWidget()
         fee_tab.setObjectName("feeTab")
         fee_tab.setStyleSheet(
-            "#feeTab { background:#f3f5f9; }"
+            "#feeTab { background:#e5eaf1; }"
             "#feeTab QLineEdit#feeSearch { background:#ffffff; color:#0f172a;"
             " border:1px solid #e2e8f0; border-radius:18px; padding:8px 14px; }"
             "#feeTab QLineEdit#feeSearch:focus { border-color:#2563eb; }"
@@ -37879,7 +37892,7 @@ class PDFViewer(QMainWindow):
         queues_tab = QWidget()
         queues_tab.setObjectName("queuesTab")
         queues_tab.setStyleSheet(
-            "#queuesTab { background:#f3f5f9; }"
+            "#queuesTab { background:#e5eaf1; }"
             "#queuesTab QListWidget { background:#ffffff; border:1px solid #e2e8f0;"
             " border-radius:10px; padding:4px; }"
             "#queuesTab QListWidget::item { padding:8px 10px; border-radius:6px; }"
@@ -38599,7 +38612,7 @@ class PDFViewer(QMainWindow):
         tasks_tab = QWidget()
         tasks_tab.setObjectName("tasksTab")
         tasks_tab.setStyleSheet(
-            "#tasksTab { background:#f3f5f9; }"
+            "#tasksTab { background:#e5eaf1; }"
             "#tasksTab QComboBox { background:#ffffff; color:#0f172a;"
             " border:1px solid #e2e8f0; border-radius:8px; padding:6px 10px; min-width:140px; }"
             "#tasksTab QComboBox:hover { border-color:#cbd5e1; }"
@@ -39931,12 +39944,12 @@ class PDFViewer(QMainWindow):
         icd_tab = QWidget()
         icd_tab.setObjectName("icdTab")
         icd_tab.setStyleSheet(
-            "#icdTab { background:#f3f5f9; }"
+            "#icdTab { background:#e5eaf1; }"
             "#icdTab QGroupBox { background:#ffffff; border:1px solid #e2e8f0;"
-            " border-radius:10px; margin-top:10px; padding-top:12px; font-weight:600;"
+            " border-radius:10px; margin-top:4px; padding-top:26px; font-weight:600;"
             " color:#475569; }"
-            "#icdTab QGroupBox::title { subcontrol-origin:margin; left:10px;"
-            " padding:0 8px; }"
+            "#icdTab QGroupBox::title { subcontrol-origin:padding;"
+            " subcontrol-position:top left; left:12px; top:7px; padding:0; }"
             "#icdTab QLineEdit#icdSearch { background:#ffffff; color:#0f172a;"
             " border:1px solid #e2e8f0; border-radius:18px; padding:9px 16px;"
             " font-size:13px; }"
