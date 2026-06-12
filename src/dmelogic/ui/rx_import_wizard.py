@@ -1684,8 +1684,9 @@ class RxImportWizard(QDialog):
     def _search_icd_code(self):
         """Open the ICD-10 search dialog and populate the next empty field."""
         try:
-            from dmelogic.legacy import ICD10SearchDialog
-            dlg = ICD10SearchDialog(self)
+            from dmelogic.ui import create_icd10_search_dialog
+
+            dlg = create_icd10_search_dialog(self)
             if dlg.exec() == QDialog.DialogCode.Accepted and dlg.selected_code:
                 code = dlg.selected_code.strip().upper()
                 # Put it in the first empty slot

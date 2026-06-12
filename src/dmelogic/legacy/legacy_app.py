@@ -10638,14 +10638,16 @@ class PDFViewer(QMainWindow):
         self.main_tabs = QTabWidget()
         self.main_tabs.setDocumentMode(True)
         
-        # Create individual tabs (Dashboard first as home screen)
+        # Create individual tabs. Order requested:
+        # Dashboard, New Orders, Patients, Prescribers, Orders, Clinics, then rest.
+        # (Dashboard self-inserts at index 0; the remaining tabs follow addTab order.)
         self.create_dashboard_tab()
-        self.create_patient_management_tab()
-        self.create_document_viewer_tab()
-        self.create_prescriber_tab()
-        self.create_clinics_tab()
+        self.create_document_viewer_tab()    # NEW ORDERS (triage)
+        self.create_patient_management_tab()  # Patients
+        self.create_prescriber_tab()          # Prescribers
+        self.create_orders_tracking_tab()     # Orders
+        self.create_clinics_tab()             # Clinics
         # Additional tabs
-        self.create_orders_tracking_tab()
         self.create_must_go_out_tab()
         self.create_inventory_tab()  # Uses existing inventory tab implementation
         self.create_billing_tab()
@@ -10665,14 +10667,15 @@ class PDFViewer(QMainWindow):
         self.datetime_banner.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.datetime_banner.setStyleSheet(
             """
-            background-color: #0f1c2c;
-            color: #f6fbff;
-            font-size: 16px;
+            background-color: #eff6ff;
+            color: #1e3a5f;
+            font-size: 15px;
             font-weight: 600;
             border-radius: 8px;
             padding: 6px 12px;
             margin-bottom: 12px;
-            border: 1px solid #1f334a;
+            border: 1px solid #bfdbfe;
+            border-left: 4px solid #2563eb;
             """
         )
         self.datetime_banner.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -10680,7 +10683,10 @@ class PDFViewer(QMainWindow):
 
         self.datetime_timer = QTimer(self)
         self.datetime_timer.timeout.connect(self._refresh_datetime_banner_text)
-        self.datetime_timer.start(1000)
+        self.datetime_timer.start(1000)  # TEMP-TEST: see _DIAG below
+        import os as _os_diag
+        if _os_diag.environ.get("DMELOGIC_NO_DT_TIMER") == "1":
+            self.datetime_timer.stop()
         self._refresh_datetime_banner_text()
 
         self.main_tabs.currentChanged.connect(self._relocate_datetime_banner)
@@ -10733,8 +10739,8 @@ class PDFViewer(QMainWindow):
         self._pinned_notes_bar.setObjectName("PinnedNotesBar")
         self._pinned_notes_bar.setStyleSheet("""
             QFrame#PinnedNotesBar {
-                background-color: #111620;
-                border-bottom: 1px solid #1e2d45;
+                background-color: #f8fafc;
+                border-bottom: 1px solid #e2e8f0;
                 padding: 2px 6px;
             }
         """)
@@ -10752,18 +10758,17 @@ class PDFViewer(QMainWindow):
         open_notes_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         open_notes_btn.setStyleSheet("""
             QPushButton {
-                background-color: #1e293b;
-                color: #93c5fd;
-                border: 1px solid #253550;
-                border-radius: 4px;
-                padding: 3px 10px;
+                background-color: #ffffff;
+                color: #2563eb;
+                border: 1px solid #e2e8f0;
+                border-radius: 6px;
+                padding: 3px 12px;
                 font-size: 8pt;
                 font-weight: 600;
             }
             QPushButton:hover {
-                background-color: #334155;
-                color: #bfdbfe;
-                border-color: #3b82f6;
+                background-color: #f1f5f9;
+                border-color: #cbd5e1;
             }
         """)
         open_notes_btn.clicked.connect(self._open_sticky_notes_manager)
@@ -11596,28 +11601,44 @@ class PDFViewer(QMainWindow):
     def create_dashboard_tab(self):
         """Create the Dashboard/Home Screen tab with overview widgets."""
         dashboard_tab = QWidget()
+        # Soft gray page so the white cards/group boxes read as floating
+        # surfaces — same original palette as the Inventory/Patients tabs.
+        dashboard_tab.setObjectName("dashTab")
+        dashboard_tab.setStyleSheet(
+            "#dashTab { background:#f3f5f9; }"
+            # Make every group box a white card on the gray page.
+            "#dashTab QGroupBox { background:#ffffff; }"
+        )
         layout = QVBoxLayout(dashboard_tab)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(20)
 
         # === Header ===
         header_layout = QHBoxLayout()
-        header = QLabel("🏠 Dashboard")
-        header.setProperty("typo", "title")
-        header_layout.addWidget(header)
+        header = QLabel("Dashboard")
+        header.setStyleSheet("font-size:22px; font-weight:700; color:#0f172a;")
+        header_sub = QLabel("Your day at a glance — orders, tasks, and alerts.")
+        header_sub.setStyleSheet("font-size:12px; color:#64748b;")
+        header_text = QVBoxLayout()
+        header_text.setSpacing(2)
+        header_text.addWidget(header)
+        header_text.addWidget(header_sub)
+        header_layout.addLayout(header_text)
         header_layout.addStretch()
-        
-        # Refresh button
-        refresh_btn = QPushButton("🔄 Refresh")
+
+        # Refresh button (accent, matches the rest of the app)
+        refresh_btn = QPushButton("🔄  Refresh")
+        refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         refresh_btn.setStyleSheet("""
             QPushButton {
-                background-color: #0078D4;
+                background-color: #2563eb;
                 color: white;
                 padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
+                border: none;
+                border-radius: 8px;
+                font-weight: 600;
             }
-            QPushButton:hover { background-color: #1084D8; }
+            QPushButton:hover { background-color: #1d4ed8; }
         """)
         refresh_btn.clicked.connect(self.refresh_dashboard)
         header_layout.addWidget(refresh_btn)
@@ -11653,7 +11674,7 @@ class PDFViewer(QMainWindow):
         orders_week_card_layout.setSpacing(4)
         orders_week_card_layout.setContentsMargins(10, 12, 10, 12)
         self.dash_orders_week_label = QLabel("0")
-        self.dash_orders_week_label.setStyleSheet("font-size: 36px; font-weight: bold; color: #3498db;")
+        self.dash_orders_week_label.setStyleSheet("font-size: 36px; font-weight: bold; color: #2563eb;")
         self.dash_orders_week_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.dash_orders_week_label.setMinimumHeight(80)
         self.dash_orders_week_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -11682,7 +11703,7 @@ class PDFViewer(QMainWindow):
         orders_month_layout.setSpacing(4)
         orders_month_layout.setContentsMargins(10, 12, 10, 12)
         self.dash_orders_month_label = QLabel("0")
-        self.dash_orders_month_label.setStyleSheet("font-size: 36px; font-weight: bold; color: #27ae60;")
+        self.dash_orders_month_label.setStyleSheet("font-size: 36px; font-weight: bold; color: #2563eb;")
         self.dash_orders_month_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.dash_orders_month_label.setMinimumHeight(80)
         self.dash_orders_month_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -11709,7 +11730,7 @@ class PDFViewer(QMainWindow):
         orders_card_layout.setSpacing(4)
         orders_card_layout.setContentsMargins(10, 12, 10, 12)
         self.dash_unbilled_label = QLabel("0")
-        self.dash_unbilled_label.setStyleSheet("font-size: 36px; font-weight: bold; color: #16a34a;")
+        self.dash_unbilled_label.setStyleSheet("font-size: 36px; font-weight: bold; color: #d97706;")
         self.dash_unbilled_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.dash_unbilled_label.setMinimumHeight(80)
         self.dash_unbilled_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -11736,7 +11757,7 @@ class PDFViewer(QMainWindow):
         patient_orders_layout.setSpacing(4)
         patient_orders_layout.setContentsMargins(10, 12, 10, 12)
         self.dash_patient_orders_label = QLabel("0")
-        self.dash_patient_orders_label.setStyleSheet("font-size: 36px; font-weight: bold; color: #ff9800;")
+        self.dash_patient_orders_label.setStyleSheet("font-size: 36px; font-weight: bold; color: #2563eb;")
         self.dash_patient_orders_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.dash_patient_orders_label.setMinimumHeight(80)
         self.dash_patient_orders_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -11763,7 +11784,7 @@ class PDFViewer(QMainWindow):
         patients_card_layout.setSpacing(4)
         patients_card_layout.setContentsMargins(10, 12, 10, 12)
         self.dash_patients_label = QLabel("0")
-        self.dash_patients_label.setStyleSheet("font-size: 36px; font-weight: bold; color: #9b59b6;")
+        self.dash_patients_label.setStyleSheet("font-size: 36px; font-weight: bold; color: #0f172a;")
         self.dash_patients_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.dash_patients_label.setMinimumHeight(80)
         self.dash_patients_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -12652,6 +12673,15 @@ class PDFViewer(QMainWindow):
         # First, create and configure the patients table
         self.patients_table = QTableWidget()
         self.patients_table.setAlternatingRowColors(True)
+        # Cleaner chrome to match the modern Inventory tab styling.
+        try:
+            from PyQt6.QtWidgets import QAbstractItemView
+            self.patients_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+            self.patients_table.setShowGrid(False)
+            self.patients_table.verticalHeader().setVisible(False)
+            self.patients_table.verticalHeader().setDefaultSectionSize(34)
+        except Exception:
+            pass
         
         # Set up table columns
         columns = [
@@ -14336,6 +14366,105 @@ class PDFViewer(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Could not open RingCentral settings: {e}")
     
+    # ── Nova ────────────────────────────────────────────────────────────
+    NOVA_UI_URL = "http://127.0.0.1:8401"
+
+    def launch_nova(self):
+        """Ensure Nova background services are running, then open the Nova UI.
+
+        Nova's interface is a local web app (served on port 8401). This makes
+        sure the background host is up (starting it on demand even if Nova was
+        disabled at launch) and opens the assistant in the default browser.
+        """
+        import time
+        import webbrowser
+        import urllib.request
+        try:
+            from dmelogic.features import NOVA_DEPENDENCIES_AVAILABLE
+            if not NOVA_DEPENDENCIES_AVAILABLE:
+                QMessageBox.warning(
+                    self, "Nova unavailable",
+                    "Nova's optional components aren't installed in this build.")
+                return
+            # Start the background API + UI hosts on demand (no-op if running).
+            try:
+                from dmelogic.services.nova_background import ensure_nova_background_services
+                from dmelogic.paths import get_project_root
+                ensure_nova_background_services(get_project_root(), enabled=True)
+            except Exception as e:
+                print(f"Nova background start failed: {e}")
+
+            # Wait briefly for the Nova UI host to actually accept connections
+            # before opening the browser, to avoid a "launches but won't connect"
+            # first hit when the process is still booting.
+            ready = False
+            deadline = time.time() + 8.0
+            while time.time() < deadline:
+                try:
+                    with urllib.request.urlopen(self.NOVA_UI_URL, timeout=1.0):
+                        ready = True
+                        break
+                except Exception:
+                    time.sleep(0.25)
+
+            if not ready:
+                try:
+                    QMessageBox.warning(
+                        self,
+                        "Nova Starting",
+                        "Nova was launched, but the local UI host is still warming up. "
+                        "It may take a few more seconds to connect.",
+                    )
+                except Exception:
+                    pass
+
+            webbrowser.open(self.NOVA_UI_URL)
+            try:
+                self.statusBar().showMessage(f"Launching Nova — {self.NOVA_UI_URL}", 5000)
+            except Exception:
+                pass
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Could not launch Nova: {e}")
+
+    def set_nova_enabled(self, enabled: bool):
+        """Persist the Nova auto-start preference to the data-root .env.
+
+        The startup sequence loads ``<data_root>/.env`` before the Nova gate, so
+        writing ``DMELOGIC_NOVA`` here makes the choice stick across launches.
+        Takes full effect on the next start; turning it on also starts the
+        services immediately.
+        """
+        import os
+        try:
+            from dmelogic.config import data_root
+            env_path = data_root() / ".env"
+            lines = []
+            if env_path.exists():
+                lines = env_path.read_text(encoding="utf-8-sig").splitlines()
+            lines = [ln for ln in lines
+                     if not ln.strip().upper().startswith("DMELOGIC_NOVA=")]
+            lines.append(f"DMELOGIC_NOVA={'1' if enabled else '0'}")
+            env_path.parent.mkdir(parents=True, exist_ok=True)
+            env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            os.environ["DMELOGIC_NOVA"] = "1" if enabled else "0"
+            if enabled:
+                try:
+                    from dmelogic.services.nova_background import ensure_nova_background_services
+                    from dmelogic.paths import get_project_root
+                    ensure_nova_background_services(get_project_root(), enabled=True)
+                except Exception as e:
+                    print(f"Nova background start failed: {e}")
+                QMessageBox.information(
+                    self, "Nova enabled",
+                    "Nova will start automatically on each launch.")
+            else:
+                QMessageBox.information(
+                    self, "Nova disabled",
+                    "Nova will not auto-start. Already-running Nova processes "
+                    "stay up until you close the app.")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Could not update Nova setting: {e}")
+
     def _start_message_notifier(self):
         """Initialize and start the message notification service."""
         try:
@@ -14533,66 +14662,79 @@ class PDFViewer(QMainWindow):
         from dmelogic.ui.draggable_button_bar import DraggableButtonBar
         
         prescriber_tab = QWidget()
+        prescriber_tab.setObjectName("presTab")
+        prescriber_tab.setStyleSheet(
+            "#presTab { background:#f3f5f9; }"
+            "#presTab QLineEdit#presSearch { background:#ffffff; color:#0f172a;"
+            " border:1px solid #e2e8f0; border-radius:18px; padding:8px 14px; min-width:260px; }"
+            "#presTab QLineEdit#presSearch:focus { border-color:#2563eb; }"
+        )
         layout = QVBoxLayout(prescriber_tab)
-        
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+
         # Header
-        header = QLabel("🩺 Prescriber Management System")
-        header.setStyleSheet("font-size: 20px; font-weight: bold; color: #0f172a; padding: 10px;")
+        header = QLabel("Prescriber Management")
+        header.setStyleSheet("font-size:22px; font-weight:700; color:#0f172a;")
+        subtitle = QLabel("Add, edit, and manage prescribing providers.")
+        subtitle.setStyleSheet("font-size:12px; color:#64748b;")
         layout.addWidget(header)
-        
+        layout.addWidget(subtitle)
+
         # Toolbar with draggable buttons
         toolbar = QHBoxLayout()
-        
+
         def _save_prescriber_button_order(order_list):
             self.settings['prescriber_button_order'] = order_list
             self.save_settings()
-        
+
         self.prescriber_button_bar = DraggableButtonBar(save_callback=_save_prescriber_button_order)
-        
+
         self.btn_add_prescriber = self.prescriber_button_bar.add_button(
             "add_prescriber", "➕ Add Prescriber", "Add a new prescriber",
             on_click=self.add_prescriber
         )
-        self.btn_add_prescriber.setStyleSheet("QPushButton { background-color: #27ae60; color: white; font-weight: bold; padding: 8px 15px; border-radius: 5px; }")
-        
         self.btn_edit_prescriber = self.prescriber_button_bar.add_button(
             "edit_prescriber", "✏️ Edit Prescriber", "Edit selected prescriber",
             on_click=self.edit_prescriber
         )
-        self.btn_edit_prescriber.setStyleSheet("QPushButton { background-color: #3498db; color: white; font-weight: bold; padding: 8px 15px; border-radius: 5px; }")
-        
         self.btn_clone_prescriber = self.prescriber_button_bar.add_button(
             "clone_prescriber", "📋 Clone Prescriber", "Clone prescriber for different practice location",
             on_click=self.clone_prescriber
         )
-        self.btn_clone_prescriber.setStyleSheet("QPushButton { background-color: #9b59b6; color: white; font-weight: bold; padding: 8px 15px; border-radius: 5px; }")
-        
         self.btn_delete_prescriber = self.prescriber_button_bar.add_button(
             "delete_prescriber", "🗑️ Delete Prescriber", "Delete selected prescriber",
             on_click=self.delete_prescriber
         )
-        self.btn_delete_prescriber.setStyleSheet("QPushButton { background-color: #e74c3c; color: white; font-weight: bold; padding: 8px 15px; border-radius: 5px; }")
-
         self.btn_prescriber_notes = self.prescriber_button_bar.add_button(
             "prescriber_notes", "🗒️ Sticky Notes", "Open prescriber sticky notes",
             on_click=self.open_prescriber_sticky_notes
         )
-        self.btn_prescriber_notes.setStyleSheet("QPushButton { background-color: #6c757d; color: white; font-weight: bold; padding: 8px 15px; border-radius: 5px; }")
-        
+
+        # Modern button styling: primary / ghost / danger.
+        from dmelogic.ui.main_window import _style_action_buttons
+        _style_action_buttons(
+            primary=[self.btn_add_prescriber],
+            danger=[self.btn_delete_prescriber],
+            ghost=[self.btn_edit_prescriber, self.btn_clone_prescriber,
+                   self.btn_prescriber_notes],
+        )
+
         # Restore saved button order if available
         saved_prescriber_order = self.settings.get('prescriber_button_order', [])
         if saved_prescriber_order:
             self.prescriber_button_bar.set_order(saved_prescriber_order)
-        
+
         toolbar.addWidget(self.prescriber_button_bar)
         toolbar.addStretch()
-        
-        # Search prescribers
+
+        # Search prescribers (pill)
         self.prescriber_search = QLineEdit()
-        self.prescriber_search.setPlaceholderText("🔍 Search prescribers by name, NPI, or specialty...")
+        self.prescriber_search.setObjectName("presSearch")
+        self.prescriber_search.setPlaceholderText("🔍  Search prescribers by name, NPI, or specialty…")
         self.prescriber_search.textChanged.connect(self.search_prescribers)
         toolbar.addWidget(self.prescriber_search)
-        
+
         layout.addLayout(toolbar)
         
         # Prescriber table
@@ -14623,40 +14765,47 @@ class PDFViewer(QMainWindow):
         # Enable row selection
         self.prescriber_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.prescriber_table.doubleClicked.connect(self.edit_prescriber)
-        
-        # Fix text color for prescriber table (ensure black text on white background)
+        self.prescriber_table.setShowGrid(False)
+        self.prescriber_table.setAlternatingRowColors(True)
+        self.prescriber_table.verticalHeader().setVisible(False)
+        self.prescriber_table.verticalHeader().setDefaultSectionSize(34)
+
+        # Modern light table chrome.
         self.prescriber_table.setStyleSheet("""
             QTableWidget {
-                background-color: white;
-                color: #000000;
-                gridline-color: #d0d0d0;
+                background-color: #ffffff;
+                color: #0f172a;
+                border: 1px solid #e2e8f0;
+                border-radius: 10px;
+                gridline-color: #e2e8f0;
+                alternate-background-color: #f8fafc;
+                selection-background-color: #e8f0fe;
+                selection-color: #0f172a;
             }
-            QTableWidget::item {
-                color: #000000;
-                background-color: white;
-            }
-            QTableWidget::item:selected {
-                background-color: #0078D4;
-                color: white;
-            }
+            QTableWidget::item { padding: 6px 8px; }
             QHeaderView::section {
-                background-color: #f0f0f0;
-                color: #000000;
-                padding: 5px;
-                border: 1px solid #d0d0d0;
+                background-color: #f8fafc;
+                color: #64748b;
+                font-weight: 600;
+                padding: 8px;
+                border: none;
+                border-bottom: 1px solid #e2e8f0;
             }
         """)
-        
+
         layout.addWidget(self.prescriber_table)
         
         # Status bar
         status_layout = QHBoxLayout()
         self.prescriber_status = QLabel("Ready")
+        self.prescriber_status.setStyleSheet("color:#64748b; font-size:12px;")
         status_layout.addWidget(self.prescriber_status)
         status_layout.addStretch()
-        
+
         refresh_btn = QPushButton("🔄 Refresh")
         refresh_btn.clicked.connect(self.load_prescribers)
+        from dmelogic.ui.main_window import _style_action_buttons as _sab_ref
+        _sab_ref(ghost=[refresh_btn])
         status_layout.addWidget(refresh_btn)
         
         layout.addLayout(status_layout)
@@ -14698,54 +14847,69 @@ class PDFViewer(QMainWindow):
         from dmelogic.ui.draggable_button_bar import DraggableButtonBar
         
         clinics_tab = QWidget()
+        clinics_tab.setObjectName("clinTab")
+        clinics_tab.setStyleSheet(
+            "#clinTab { background:#f3f5f9; }"
+            "#clinTab QLineEdit#clinSearch { background:#ffffff; color:#0f172a;"
+            " border:1px solid #e2e8f0; border-radius:18px; padding:8px 14px; min-width:260px; }"
+            "#clinTab QLineEdit#clinSearch:focus { border-color:#2563eb; }"
+        )
         layout = QVBoxLayout(clinics_tab)
-        
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+
         # Header
-        header = QLabel("🏥 Clinic Management System")
-        header.setStyleSheet("font-size: 20px; font-weight: bold; color: #0f172a; padding: 10px;")
+        header = QLabel("Clinic Management")
+        header.setStyleSheet("font-size:22px; font-weight:700; color:#0f172a;")
+        subtitle = QLabel("Add, edit, and manage referring clinics and contacts.")
+        subtitle.setStyleSheet("font-size:12px; color:#64748b;")
         layout.addWidget(header)
-        
+        layout.addWidget(subtitle)
+
         # Toolbar with buttons
         toolbar = QHBoxLayout()
-        
+
         def _save_clinic_button_order(order_list):
             self.settings['clinic_button_order'] = order_list
             self.save_settings()
-        
+
         self.clinic_button_bar = DraggableButtonBar(save_callback=_save_clinic_button_order)
-        
+
         self.btn_add_clinic = self.clinic_button_bar.add_button(
             "add_clinic", "➕ Add Clinic", "Add a new clinic",
             on_click=self.add_clinic
         )
-        self.btn_add_clinic.setStyleSheet("QPushButton { background-color: #27ae60; color: white; font-weight: bold; padding: 8px 15px; border-radius: 5px; }")
-        
         self.btn_edit_clinic = self.clinic_button_bar.add_button(
             "edit_clinic", "✏️ Edit Clinic", "Edit selected clinic",
             on_click=self.edit_clinic
         )
-        self.btn_edit_clinic.setStyleSheet("QPushButton { background-color: #3498db; color: white; font-weight: bold; padding: 8px 15px; border-radius: 5px; }")
-        
         self.btn_delete_clinic = self.clinic_button_bar.add_button(
             "delete_clinic", "🗑️ Delete Clinic", "Delete selected clinic",
             on_click=self.delete_clinic
         )
-        self.btn_delete_clinic.setStyleSheet("QPushButton { background-color: #e74c3c; color: white; font-weight: bold; padding: 8px 15px; border-radius: 5px; }")
-        
+
+        from dmelogic.ui.main_window import _style_action_buttons
+        _style_action_buttons(
+            primary=[self.btn_add_clinic],
+            danger=[self.btn_delete_clinic],
+            ghost=[self.btn_edit_clinic],
+        )
+
         # Restore saved button order if available
         saved_clinic_order = self.settings.get('clinic_button_order', [])
         if saved_clinic_order:
             self.clinic_button_bar.set_order(saved_clinic_order)
-        
+
         toolbar.addWidget(self.clinic_button_bar)
         toolbar.addStretch()
-        
-        # Search clinics
+
+        # Search clinics (pill)
         self.clinic_search = QLineEdit()
-        self.clinic_search.setPlaceholderText("🔍 Search clinics by name, contact, or city...")
+        self.clinic_search.setObjectName("clinSearch")
+        self.clinic_search.setPlaceholderText("🔍  Search clinics by name, contact, or city…")
         self.clinic_search.textChanged.connect(self.search_clinics)
         toolbar.addWidget(self.clinic_search)
-        
+
         layout.addLayout(toolbar)
         
         # Clinic table
@@ -14777,40 +14941,47 @@ class PDFViewer(QMainWindow):
         # Enable row selection
         self.clinic_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.clinic_table.doubleClicked.connect(self.edit_clinic)
-        
-        # Fix text color for clinic table
+        self.clinic_table.setShowGrid(False)
+        self.clinic_table.setAlternatingRowColors(True)
+        self.clinic_table.verticalHeader().setVisible(False)
+        self.clinic_table.verticalHeader().setDefaultSectionSize(34)
+
+        # Modern light table chrome.
         self.clinic_table.setStyleSheet("""
             QTableWidget {
-                background-color: white;
-                color: #000000;
-                gridline-color: #d0d0d0;
+                background-color: #ffffff;
+                color: #0f172a;
+                border: 1px solid #e2e8f0;
+                border-radius: 10px;
+                gridline-color: #e2e8f0;
+                alternate-background-color: #f8fafc;
+                selection-background-color: #e8f0fe;
+                selection-color: #0f172a;
             }
-            QTableWidget::item {
-                color: #000000;
-                background-color: white;
-            }
-            QTableWidget::item:selected {
-                background-color: #0078D4;
-                color: white;
-            }
+            QTableWidget::item { padding: 6px 8px; }
             QHeaderView::section {
-                background-color: #f0f0f0;
-                color: #000000;
-                padding: 5px;
-                border: 1px solid #d0d0d0;
+                background-color: #f8fafc;
+                color: #64748b;
+                font-weight: 600;
+                padding: 8px;
+                border: none;
+                border-bottom: 1px solid #e2e8f0;
             }
         """)
-        
+
         layout.addWidget(self.clinic_table)
         
         # Status bar
         status_layout = QHBoxLayout()
         self.clinic_status = QLabel("Ready")
+        self.clinic_status.setStyleSheet("color:#64748b; font-size:12px;")
         status_layout.addWidget(self.clinic_status)
         status_layout.addStretch()
-        
+
         refresh_btn = QPushButton("🔄 Refresh")
         refresh_btn.clicked.connect(self.load_clinics)
+        from dmelogic.ui.main_window import _style_action_buttons as _sab_clin
+        _sab_clin(ghost=[refresh_btn])
         status_layout.addWidget(refresh_btn)
         
         layout.addLayout(status_layout)
@@ -15962,16 +16133,40 @@ class PDFViewer(QMainWindow):
             QPushButton:hover { background-color: #e8690b; }
         """)
         
+        # Data management buttons (moved here from the old Inventory menu).
+        def _mk_tool_btn(text, bg, hover, fg="white"):
+            b = QPushButton(text)
+            b.setMinimumHeight(40)
+            b.setStyleSheet(
+                f"QPushButton {{ background-color: {bg}; color: {fg}; border: none;"
+                f" padding: 12px 18px; border-radius: 6px; font-weight: bold;"
+                f" font-size: 14px; }}"
+                f" QPushButton:hover {{ background-color: {hover}; }}")
+            return b
+
+        export_template_btn = _mk_tool_btn("📄 Export Template", "#0d6efd", "#0b5ed7")
+        export_template_btn.setToolTip("Save an Excel template you can fill out for bulk import")
+        import_excel_btn = _mk_tool_btn("📥 Import from Excel", "#0dcaf0", "#31d2f2", fg="black")
+        import_excel_btn.setToolTip("Import items from an Excel (.xlsx) or CSV file")
+        clear_inventory_btn = _mk_tool_btn("🧹 Clear All Inventory", "#6c757d", "#5c636a")
+        clear_inventory_btn.setToolTip("Delete all inventory items and transactions")
+
         # Connect buttons to inventory functionality
         add_item_btn.clicked.connect(self.add_inventory_item)
         edit_item_btn.clicked.connect(self.edit_dme_inventory_item)
         delete_item_btn.clicked.connect(self.delete_dme_inventory_item)
         low_stock_btn.clicked.connect(self.show_low_stock_report)
-        
+        export_template_btn.clicked.connect(self.export_inventory_template)
+        import_excel_btn.clicked.connect(self.import_inventory_from_excel)
+        clear_inventory_btn.clicked.connect(self.clear_all_inventory)
+
         button_layout.addWidget(add_item_btn)
         button_layout.addWidget(edit_item_btn)
         button_layout.addWidget(delete_item_btn)
         button_layout.addWidget(low_stock_btn)
+        button_layout.addWidget(export_template_btn)
+        button_layout.addWidget(import_excel_btn)
+        button_layout.addWidget(clear_inventory_btn)
         button_layout.addStretch()
         
         # Load inventory data from database FIRST
@@ -16152,10 +16347,17 @@ class PDFViewer(QMainWindow):
         # First, create and configure the orders table
         self.orders_table = QTableWidget()
         self.orders_table.setAlternatingRowColors(True)
-        
+
         # Enable multi-select for batch operations
         self.orders_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.orders_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        # Cleaner chrome to match the modern tab styling.
+        try:
+            self.orders_table.setShowGrid(False)
+            self.orders_table.verticalHeader().setVisible(False)
+            self.orders_table.verticalHeader().setDefaultSectionSize(34)
+        except Exception:
+            pass
         
         # Set up table columns
         columns = [
@@ -16242,6 +16444,8 @@ class PDFViewer(QMainWindow):
         self.btn_link_patient.clicked.connect(self.show_link_order_dialog)
         if hasattr(self, "btn_import_rx") and hasattr(self, "_open_rx_import"):
             self.btn_import_rx.clicked.connect(self._open_rx_import)
+        if hasattr(self, "btn_batch_print_tickets"):
+            self.btn_batch_print_tickets.clicked.connect(self.batch_print_delivery_tickets)
         
         # Connect table selection to update summary
         self.orders_table.selectionModel().currentRowChanged.connect(
@@ -16256,11 +16460,29 @@ class PDFViewer(QMainWindow):
     def create_must_go_out_tab(self):
         """Create the Must-Go-Out request tab for tracking outbound promises."""
         go_tab = QWidget()
+        go_tab.setObjectName("goTab")
+        go_tab.setStyleSheet(
+            "#goTab { background:#f3f5f9; }"
+            "#goTab QGroupBox { background:#ffffff; border:1px solid #e2e8f0;"
+            " border-radius:10px; margin-top:10px; padding-top:12px; font-weight:600;"
+            " color:#475569; }"
+            "#goTab QGroupBox::title { subcontrol-origin:margin; left:10px; padding:0 8px; }"
+            "#goTab QLineEdit { background:#ffffff; color:#0f172a; border:1px solid #e2e8f0;"
+            " border-radius:8px; padding:7px 10px; }"
+            "#goTab QLineEdit:focus { border-color:#2563eb; }"
+            "#goTab QComboBox { background:#ffffff; color:#0f172a; border:1px solid #e2e8f0;"
+            " border-radius:8px; padding:6px 10px; min-width:140px; }"
+            "#goTab QComboBox:hover { border-color:#cbd5e1; }"
+            "#goTab QLabel { color:#334155; }"
+        )
         layout = QVBoxLayout(go_tab)
+        layout.setContentsMargins(20, 18, 20, 18)
         layout.setSpacing(12)
 
-        header = QLabel("🚚 Orders That Must Go Out")
-        header.setStyleSheet("font-size: 20px; font-weight: bold; color: #0f172a; padding-top: 6px;")
+        from dmelogic.ui.main_window import _style_action_buttons as _sab_go
+
+        header = QLabel("Orders That Must Go Out")
+        header.setStyleSheet("font-size:22px; font-weight:700; color:#0f172a;")
         layout.addWidget(header)
 
         description = QLabel(
@@ -16268,7 +16490,7 @@ class PDFViewer(QMainWindow):
             "not built yet. Add either an existing order number or simply the patient's information."
         )
         description.setWordWrap(True)
-        description.setStyleSheet("color: #c0c0c0;")
+        description.setStyleSheet("color:#64748b; font-size:12px;")
         layout.addWidget(description)
 
         form_group = QGroupBox("Add Request")
@@ -16297,8 +16519,8 @@ class PDFViewer(QMainWindow):
         form_layout.addWidget(self.go_out_notes_input, 3, 1)
 
         add_btn = QPushButton("➕ Add To List")
-        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         add_btn.clicked.connect(self.add_must_go_out_entry)
+        _sab_go(primary=[add_btn])
         form_layout.addWidget(add_btn, 4, 1, 1, 1, Qt.AlignmentFlag.AlignRight)
 
         layout.addWidget(form_group)
@@ -16313,7 +16535,7 @@ class PDFViewer(QMainWindow):
         filter_row.addWidget(self.go_out_status_filter)
         filter_row.addStretch()
         self.go_out_summary_label = QLabel("No requests yet")
-        self.go_out_summary_label.setStyleSheet("color: #c0c0c0; font-style: italic;")
+        self.go_out_summary_label.setStyleSheet("color:#64748b; font-style: italic;")
         filter_row.addWidget(self.go_out_summary_label)
         layout.addLayout(filter_row)
 
@@ -16334,23 +16556,44 @@ class PDFViewer(QMainWindow):
         self.go_out_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.go_out_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.go_out_table.setAlternatingRowColors(True)
+        self.go_out_table.setShowGrid(False)
+        self.go_out_table.verticalHeader().setVisible(False)
+        self.go_out_table.verticalHeader().setDefaultSectionSize(34)
+        self.go_out_table.setStyleSheet("""
+            QTableWidget {
+                background-color: #ffffff;
+                color: #0f172a;
+                border: 1px solid #e2e8f0;
+                border-radius: 10px;
+                gridline-color: #e2e8f0;
+                alternate-background-color: #f8fafc;
+                selection-background-color: #e8f0fe;
+                selection-color: #0f172a;
+            }
+            QTableWidget::item { padding: 6px 8px; }
+            QHeaderView::section {
+                background-color: #f8fafc;
+                color: #64748b;
+                font-weight: 600;
+                padding: 8px;
+                border: none;
+                border-bottom: 1px solid #e2e8f0;
+            }
+        """)
         self.go_out_table.itemSelectionChanged.connect(self.update_must_go_out_buttons)
         self.go_out_table.cellDoubleClicked.connect(self.open_order_from_go_out)
         layout.addWidget(self.go_out_table)
 
         controls = QHBoxLayout()
         self.go_out_attach_btn = QPushButton("🔗 Attach Order #")
-        self.go_out_attach_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.go_out_attach_btn.clicked.connect(self.attach_order_to_go_out_entry)
         controls.addWidget(self.go_out_attach_btn)
 
         self.go_out_mark_sent_btn = QPushButton("✅ Mark Sent")
-        self.go_out_mark_sent_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.go_out_mark_sent_btn.clicked.connect(self.mark_selected_go_out_sent)
         controls.addWidget(self.go_out_mark_sent_btn)
 
         self.go_out_remove_btn = QPushButton("🗑️ Remove")
-        self.go_out_remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.go_out_remove_btn.clicked.connect(self.remove_selected_go_out_entry)
         controls.addWidget(self.go_out_remove_btn)
 
@@ -16359,6 +16602,12 @@ class PDFViewer(QMainWindow):
         refresh_btn = QPushButton("🔄 Refresh")
         refresh_btn.clicked.connect(self.load_must_go_out_entries)
         controls.addWidget(refresh_btn)
+
+        _sab_go(
+            primary=[self.go_out_mark_sent_btn],
+            danger=[self.go_out_remove_btn],
+            ghost=[self.go_out_attach_btn, refresh_btn],
+        )
 
         layout.addLayout(controls)
 
@@ -16413,11 +16662,16 @@ class PDFViewer(QMainWindow):
             print(f"Datetime banner update error: {e}")
 
     def _choose_datetime_banner_palette(self, now: datetime) -> tuple[str, dict[str, str]]:
-        """Return palette name + colors based on current time block."""
+        """Return palette name + colors based on current time block.
+
+        Soft tinted cards (light bg, dark text, a colored left accent) keep the
+        time-of-day cue without the loud saturated fill that clashed with the
+        light theme. ``accent`` drives the left stripe.
+        """
         palettes = {
-            "blue": {"bg": "#0f1c2c", "fg": "#f6fbff", "border": "#1f334a"},
-            "yellow": {"bg": "#f7c948", "fg": "#1a1400", "border": "#d29c1c"},
-            "red": {"bg": "#b91c1c", "fg": "#ffffff", "border": "#e04646"},
+            "blue":   {"bg": "#eff6ff", "fg": "#1e3a5f", "border": "#bfdbfe", "accent": "#2563eb"},
+            "yellow": {"bg": "#fffbeb", "fg": "#78350f", "border": "#fde68a", "accent": "#d97706"},
+            "red":    {"bg": "#fef2f2", "fg": "#7f1d1d", "border": "#fecaca", "accent": "#dc2626"},
         }
 
         hour = now.hour
@@ -16439,12 +16693,13 @@ class PDFViewer(QMainWindow):
         return (
             "background-color: {bg};"
             "color: {fg};"
-            "font-size: 16px;"
+            "font-size: 15px;"
             "font-weight: 600;"
             "border-radius: 8px;"
             "padding: 6px 12px;"
             "margin-bottom: 12px;"
             "border: 1px solid {border};"
+            "border-left: 4px solid {accent};"
         ).format(**palette)
 
     def _relocate_datetime_banner(self, tab_index: int):
@@ -17287,8 +17542,15 @@ class PDFViewer(QMainWindow):
                         patient_display = f"  └─"  # Visual connector
                     
                     order_date_display = (order_date or "") if idx == 0 else ""
-                    # Merged Del/PU Date: prefer pickup_date for pickups, else delivery_date
+                    # Merged Del/PU Date: prefer pickup_date for pickups, else delivery_date.
+                    # Only meaningful for delivered / picked-up / shipped orders;
+                    # blank otherwise (and never show the 01/01/2000 sentinel).
                     del_pu_raw = pickup_date or delivery_date or ""
+                    if del_pu_raw in ("01/01/2000", "1/1/2000"):
+                        del_pu_raw = ""
+                    _status_lc = (status or "").strip().lower()
+                    if not any(k in _status_lc for k in ("delivered", "picked up", "shipped")):
+                        del_pu_raw = ""
                     try:
                         del_pu_display = (self.format_date_display(del_pu_raw) if del_pu_raw else "") if idx == 0 else ""
                     except Exception:
@@ -17300,6 +17562,11 @@ class PDFViewer(QMainWindow):
                     
                     # Item-specific data
                     order_item = QTableWidgetItem(order_display)
+                    # Header row (idx==0) gets a checkbox for batch operations
+                    # (e.g. batch-print delivery tickets). Continuation rows don't.
+                    if idx == 0:
+                        order_item.setFlags(order_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                        order_item.setCheckState(Qt.CheckState.Unchecked)
                     patient_item = QTableWidgetItem(patient_display)
                     font = patient_item.font()
                     font.setBold(True)
@@ -18067,56 +18334,120 @@ class PDFViewer(QMainWindow):
 
     def create_inventory_tab(self):
         """Create the Inventory Management tab for DME software"""
+        # ── Modern light-theme proof of concept ──────────────────────────────
+        # Original neutral palette (slate grays + one blue accent). No assets,
+        # icons, or color sets copied from any third-party product — these are
+        # generic, unprotectable design conventions (whitespace, white cards on
+        # a light page, flat "ghost" buttons, a pill search field).
+        ACCENT      = "#2563eb"   # primary action blue
+        ACCENT_DK   = "#1d4ed8"
+        PAGE_BG     = "#f3f5f9"   # soft gray page
+        SURFACE     = "#ffffff"   # white cards / table
+        BORDER      = "#e2e8f0"   # hairline borders
+        BORDER_HOV  = "#cbd5e1"
+        TEXT        = "#0f172a"   # primary text
+        TEXT_MUTED  = "#64748b"   # secondary text
+        GHOST_HOV   = "#f1f5f9"   # ghost-button hover fill
+        DANGER      = "#dc2626"   # destructive text
+        DANGER_BG   = "#fef2f2"   # destructive hover fill
+        DANGER_BD   = "#fecaca"
+
+        def _ghost(text, slot, tip=""):
+            b = QPushButton(text)
+            if tip:
+                b.setToolTip(tip)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setStyleSheet(
+                f"QPushButton {{ background:{SURFACE}; color:{TEXT}; font-weight:600;"
+                f" padding:8px 14px; border:1px solid {BORDER}; border-radius:8px; }}"
+                f"QPushButton:hover {{ background:{GHOST_HOV}; border-color:{BORDER_HOV}; }}"
+                f"QPushButton:pressed {{ background:{BORDER}; }}"
+            )
+            b.clicked.connect(slot)
+            return b
+
+        def _danger(text, slot, tip=""):
+            b = QPushButton(text)
+            if tip:
+                b.setToolTip(tip)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setStyleSheet(
+                f"QPushButton {{ background:{SURFACE}; color:{DANGER}; font-weight:600;"
+                f" padding:8px 14px; border:1px solid {DANGER_BD}; border-radius:8px; }}"
+                f"QPushButton:hover {{ background:{DANGER_BG}; border-color:{DANGER}; }}"
+            )
+            b.clicked.connect(slot)
+            return b
+
         inventory_tab = QWidget()
+        inventory_tab.setObjectName("invTab")
+        inventory_tab.setStyleSheet(
+            f"#invTab {{ background:{PAGE_BG}; }}"
+            # White, rounded data table with a light header and roomy rows.
+            f"#invTab QTableWidget {{ background:{SURFACE}; border:1px solid {BORDER};"
+            f" border-radius:10px; gridline-color:{BORDER};"
+            f" selection-background-color:#e8f0fe; selection-color:{TEXT}; }}"
+            f"#invTab QTableWidget::item {{ padding:6px 8px; }}"
+            f"#invTab QHeaderView::section {{ background:#f8fafc; color:{TEXT_MUTED};"
+            f" font-weight:600; padding:8px; border:none;"
+            f" border-bottom:1px solid {BORDER}; }}"
+            # Pill-shaped search field.
+            f"#invTab QLineEdit#invSearch {{ background:{SURFACE}; color:{TEXT};"
+            f" border:1px solid {BORDER}; border-radius:18px; padding:8px 14px;"
+            f" min-width:260px; }}"
+            f"#invTab QLineEdit#invSearch:focus {{ border-color:{ACCENT}; }}"
+        )
         layout = QVBoxLayout(inventory_tab)
-        
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(14)
+
         # Header
-        header = QLabel("📦 Inventory Management System")
-        header.setStyleSheet("font-size: 20px; font-weight: bold; color: #0f172a; padding: 10px;")
+        header = QLabel("Inventory Management")
+        header.setStyleSheet(
+            f"font-size:22px; font-weight:700; color:{TEXT}; padding:0;")
+        subtitle = QLabel("Track stock, costs, and reorder levels across your catalog.")
+        subtitle.setStyleSheet(f"font-size:12px; color:{TEXT_MUTED}; padding:0 0 4px 0;")
         layout.addWidget(header)
-        
+        layout.addWidget(subtitle)
+
         # Toolbar
         toolbar = QHBoxLayout()
-        
-        add_item_btn = QPushButton("➕ Add Item")
-        add_item_btn.setStyleSheet("QPushButton { background-color: #27ae60; color: white; font-weight: bold; padding: 8px 15px; border-radius: 5px; }")
+        toolbar.setSpacing(8)
+
+        # Primary action: filled accent button.
+        add_item_btn = QPushButton("➕  Add Item")
+        add_item_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_item_btn.setStyleSheet(
+            f"QPushButton {{ background:{ACCENT}; color:white; font-weight:600;"
+            f" padding:8px 16px; border:none; border-radius:8px; }}"
+            f"QPushButton:hover {{ background:{ACCENT_DK}; }}"
+        )
         add_item_btn.clicked.connect(self.add_inventory_item)
         toolbar.addWidget(add_item_btn)
-        
-        edit_item_btn = QPushButton("✏️ Edit Item")
-        edit_item_btn.setStyleSheet("QPushButton { background-color: #3498db; color: white; font-weight: bold; padding: 8px 15px; border-radius: 5px; }")
-        edit_item_btn.clicked.connect(self.edit_inventory_item)
-        toolbar.addWidget(edit_item_btn)
-        
-        delete_item_btn = QPushButton("🗑️ Delete Item")
-        delete_item_btn.setStyleSheet("QPushButton { background-color: #e74c3c; color: white; font-weight: bold; padding: 8px 15px; border-radius: 5px; }")
-        delete_item_btn.clicked.connect(self.delete_inventory_item)
-        toolbar.addWidget(delete_item_btn)
-        
-        duplicate_item_btn = QPushButton("📋 Duplicate Item")
-        duplicate_item_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; font-weight: bold; padding: 8px 15px; border-radius: 5px; }")
-        duplicate_item_btn.clicked.connect(self.duplicate_inventory_item)
-        toolbar.addWidget(duplicate_item_btn)
 
-        reports_btn = QPushButton("📊 Generate Reports")
-        reports_btn.setStyleSheet("QPushButton { background-color: #9b59b6; color: white; font-weight: bold; padding: 8px 15px; border-radius: 5px; }")
-        reports_btn.clicked.connect(self.open_reports_dialog)
-        toolbar.addWidget(reports_btn)
+        # Secondary actions: neutral ghost buttons.
+        toolbar.addWidget(_ghost("✏️  Edit", self.edit_inventory_item))
+        toolbar.addWidget(_danger("🗑️  Delete", self.delete_inventory_item))
+        toolbar.addWidget(_ghost("📋  Duplicate", self.duplicate_inventory_item))
+        toolbar.addWidget(_ghost("📊  Reports", self.open_reports_dialog))
+        toolbar.addWidget(_ghost("📈  Dashboard", self.open_reports_dashboard_standalone,
+                                 "Open the standalone Reports & Analytics dashboard"))
+        toolbar.addWidget(_ghost("📄  Export Template", self.export_inventory_template,
+                                 "Export a blank Excel template for bulk inventory entry"))
+        toolbar.addWidget(_ghost("📥  Import", self.import_inventory_from_excel,
+                                 "Bulk-import inventory items from an Excel/CSV file"))
+        toolbar.addWidget(_danger("🧹  Clear All", self.clear_all_inventory,
+                                  "Remove every inventory item (irreversible)"))
 
-        reports_dash_btn = QPushButton("📈 Reports Dashboard")
-        reports_dash_btn.setToolTip("Open the standalone Reports & Analytics dashboard")
-        reports_dash_btn.setStyleSheet("QPushButton { background-color: #8e44ad; color: white; font-weight: bold; padding: 8px 15px; border-radius: 5px; }")
-        reports_dash_btn.clicked.connect(self.open_reports_dashboard_standalone)
-        toolbar.addWidget(reports_dash_btn)
-        
         toolbar.addStretch()
-        
-        # Search inventory
+
+        # Search inventory (pill)
         inventory_search = QLineEdit()
-        inventory_search.setPlaceholderText("🔍 Search inventory by name, HCPCS, or description...")
+        inventory_search.setObjectName("invSearch")
+        inventory_search.setPlaceholderText("🔍  Search by name, HCPCS, or description…")
         inventory_search.textChanged.connect(self.search_inventory)
         toolbar.addWidget(inventory_search)
-        
+
         layout.addLayout(toolbar)
         
         # Inventory table
@@ -18128,7 +18459,19 @@ class PDFViewer(QMainWindow):
         ])
         # Enable double-click to edit
         self.inventory_table.itemDoubleClicked.connect(self.edit_inventory_item)
-        
+
+        # Cleaner table chrome: full-row selection, no cell focus box, alternating
+        # row tint, and roomier rows so the data has room to breathe.
+        try:
+            from PyQt6.QtWidgets import QAbstractItemView
+            self.inventory_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+            self.inventory_table.setShowGrid(False)
+            self.inventory_table.setAlternatingRowColors(True)
+            self.inventory_table.verticalHeader().setVisible(False)
+            self.inventory_table.verticalHeader().setDefaultSectionSize(34)
+        except Exception:
+            pass
+
         # Set column widths
         header = self.inventory_table.horizontalHeader()
         header.resizeSection(0, 80)    # Item ID
@@ -18149,13 +18492,13 @@ class PDFViewer(QMainWindow):
         # Status bar for inventory
         status_layout = QHBoxLayout()
         self.inventory_status = QLabel("Ready")
+        self.inventory_status.setStyleSheet(f"color:{TEXT_MUTED}; font-size:12px;")
         status_layout.addWidget(self.inventory_status)
         status_layout.addStretch()
-        
-        low_stock_btn = QPushButton("⚠️ Low Stock Report")
-        low_stock_btn.clicked.connect(self.show_low_stock_report)
+
+        low_stock_btn = _ghost("⚠️  Low Stock Report", self.show_low_stock_report)
         status_layout.addWidget(low_stock_btn)
-        
+
         layout.addLayout(status_layout)
         
         self.main_tabs.addTab(inventory_tab, "Inventory")
@@ -18164,47 +18507,64 @@ class PDFViewer(QMainWindow):
     def create_billing_tab(self):
         """Create the Billing Management tab for DME software"""
         billing_tab = QWidget()
+        billing_tab.setObjectName("billTab")
+        billing_tab.setStyleSheet(
+            "#billTab { background:#f3f5f9; }"
+            "#billTab QComboBox { background:#ffffff; color:#0f172a;"
+            " border:1px solid #e2e8f0; border-radius:8px; padding:6px 10px; min-width:140px; }"
+            "#billTab QComboBox:hover { border-color:#cbd5e1; }"
+        )
         layout = QVBoxLayout(billing_tab)
-        
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+
         # Header
-        header = QLabel("💰 Billing & Insurance Management")
-        header.setStyleSheet("font-size: 20px; font-weight: bold; color: #0f172a; padding: 10px;")
+        header = QLabel("Billing & Insurance")
+        header.setStyleSheet("font-size:22px; font-weight:700; color:#0f172a;")
+        subtitle = QLabel("Create and track insurance claims, payments, and balances.")
+        subtitle.setStyleSheet("font-size:12px; color:#64748b;")
         layout.addWidget(header)
-        
+        layout.addWidget(subtitle)
+
+        from dmelogic.ui.main_window import _style_action_buttons as _sab_bill
+
         # Billing toolbar
         billing_toolbar = QHBoxLayout()
-        
+
         create_claim_btn = QPushButton("📄 Create Claim")
-        create_claim_btn.setStyleSheet("QPushButton { background-color: #27ae60; color: white; font-weight: bold; padding: 8px 15px; border-radius: 5px; }")
         create_claim_btn.clicked.connect(self.create_insurance_claim)
         billing_toolbar.addWidget(create_claim_btn)
-        
+
         submit_claim_btn = QPushButton("📤 Submit Claims")
-        submit_claim_btn.setStyleSheet("QPushButton { background-color: #3498db; color: white; font-weight: bold; padding: 8px 15px; border-radius: 5px; }")
         submit_claim_btn.clicked.connect(self.submit_claims)
         billing_toolbar.addWidget(submit_claim_btn)
-        
+
         payment_btn = QPushButton("💳 Record Payment")
-        payment_btn.setStyleSheet("QPushButton { background-color: #f39c12; color: white; font-weight: bold; padding: 8px 15px; border-radius: 5px; }")
         payment_btn.clicked.connect(self.record_payment)
         billing_toolbar.addWidget(payment_btn)
-        
+
         # Quick access: open Billing Report in Reports tab
         billing_report_btn = QPushButton("📈 Billing Report")
-        billing_report_btn.setStyleSheet("QPushButton { background-color: #8e44ad; color: white; font-weight: bold; padding: 8px 15px; border-radius: 5px; }")
         billing_report_btn.setToolTip("Open Reports tab pre-filled with Billing analytics for the selected date range")
         billing_report_btn.clicked.connect(self.open_billing_report_from_billing_tab)
         billing_toolbar.addWidget(billing_report_btn)
 
+        _sab_bill(
+            primary=[create_claim_btn],
+            ghost=[submit_claim_btn, payment_btn, billing_report_btn],
+        )
+
         billing_toolbar.addStretch()
-        
+
         # Filter options
+        filter_label = QLabel("Filter:")
+        filter_label.setStyleSheet("color:#64748b; font-weight:600;")
         filter_combo = QComboBox()
         filter_combo.addItems(["All Claims", "Pending", "Submitted", "Paid", "Denied", "Outstanding"])
         filter_combo.currentTextChanged.connect(self.filter_billing_records)
-        billing_toolbar.addWidget(QLabel("Filter:"))
+        billing_toolbar.addWidget(filter_label)
         billing_toolbar.addWidget(filter_combo)
-        
+
         layout.addLayout(billing_toolbar)
         
         # Billing records table
@@ -18213,7 +18573,32 @@ class PDFViewer(QMainWindow):
         self.billing_table.setHorizontalHeaderLabels([
             "Claim ID", "Patient", "Order ID", "Insurance", "Claim Amount", "Paid Amount", "Balance", "Status", "Date Created", "Date Paid"
         ])
-        
+        self.billing_table.setShowGrid(False)
+        self.billing_table.setAlternatingRowColors(True)
+        self.billing_table.verticalHeader().setVisible(False)
+        self.billing_table.verticalHeader().setDefaultSectionSize(34)
+        self.billing_table.setStyleSheet("""
+            QTableWidget {
+                background-color: #ffffff;
+                color: #0f172a;
+                border: 1px solid #e2e8f0;
+                border-radius: 10px;
+                gridline-color: #e2e8f0;
+                alternate-background-color: #f8fafc;
+                selection-background-color: #e8f0fe;
+                selection-color: #0f172a;
+            }
+            QTableWidget::item { padding: 6px 8px; }
+            QHeaderView::section {
+                background-color: #f8fafc;
+                color: #64748b;
+                font-weight: 600;
+                padding: 8px;
+                border: none;
+                border-bottom: 1px solid #e2e8f0;
+            }
+        """)
+
         # Set column widths
         header = self.billing_table.horizontalHeader()
         header.resizeSection(0, 80)   # Claim ID
@@ -18267,36 +18652,47 @@ class PDFViewer(QMainWindow):
         from dmelogic.reports.base.report_engine import ReportData, ReportColumn, ReportRow
 
         reports_tab = QWidget()
+        reports_tab.setObjectName("repTab")
+        reports_tab.setStyleSheet(
+            "#repTab { background:#f3f5f9; }"
+            "#repTab QDateEdit { background:#ffffff; color:#0f172a;"
+            " border:1px solid #e2e8f0; border-radius:8px; padding:5px 8px; }"
+        )
         self.reports_tab = reports_tab  # keep reference for programmatic switching
         main_layout = QVBoxLayout(reports_tab)
-        main_layout.setContentsMargins(12, 12, 12, 12)
-        main_layout.setSpacing(8)
+        main_layout.setContentsMargins(20, 18, 20, 18)
+        main_layout.setSpacing(10)
 
         # ===== Header =====
         header = QLabel("Reports & Analytics")
-        header_font = QFont("Segoe UI", 13)
-        header_font.setBold(True)
-        header.setFont(header_font)
-        header.setStyleSheet("color: #0f172a; font-size: 20px; font-weight: bold; padding: 10px;")
+        header.setStyleSheet("color:#0f172a; font-size:22px; font-weight:700;")
+        subtitle = QLabel("Pick a report and date range, then generate or export.")
+        subtitle.setStyleSheet("color:#64748b; font-size:12px;")
         main_layout.addWidget(header)
+        main_layout.addWidget(subtitle)
 
         # ===== Toolbar – report selectors + date range =====
         toolbar_row = QHBoxLayout()
         toolbar_row.setSpacing(6)
 
         def make_primary_button(text: str) -> QPushButton:
+            # Report selectors are neutral "ghost" buttons (one of many choices,
+            # not the single primary action — Generate is the primary).
             btn = QPushButton(text)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setMinimumWidth(110)
             btn.setStyleSheet("""
                 QPushButton {
-                    background-color: #1976d2;
-                    color: white;
-                    border-radius: 4px;
-                    padding: 4px 10px;
+                    background-color: #ffffff;
+                    color: #0f172a;
+                    font-weight: 600;
+                    border: 1px solid #e2e8f0;
+                    border-radius: 8px;
+                    padding: 6px 12px;
                 }
                 QPushButton:hover {
-                    background-color: #1565c0;
+                    background-color: #f1f5f9;
+                    border-color: #cbd5e1;
                 }
             """)
             return btn
@@ -18319,16 +18715,20 @@ class PDFViewer(QMainWindow):
         import_payments_btn = QPushButton("📥 Import Payments")
         import_payments_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         import_payments_btn.setMinimumWidth(130)
+        # Distinct from the report selectors: a soft green ghost (it's an action,
+        # not a report choice) but no longer a loud saturated fill.
         import_payments_btn.setStyleSheet("""
             QPushButton {
-                background-color: #388e3c;
-                color: white;
-                border-radius: 4px;
-                padding: 4px 10px;
-                font-weight: bold;
+                background-color: #ffffff;
+                color: #15803d;
+                font-weight: 600;
+                border: 1px solid #bbf7d0;
+                border-radius: 8px;
+                padding: 6px 12px;
             }
             QPushButton:hover {
-                background-color: #2e7d32;
+                background-color: #f0fdf4;
+                border-color: #16a34a;
             }
         """)
 
@@ -18373,12 +18773,14 @@ class PDFViewer(QMainWindow):
 
         # Date range pickers
         date_label = QLabel("From:")
+        date_label.setStyleSheet("color:#64748b; font-weight:600;")
         self.report_start_date = QDateEdit()
         self.report_start_date.setDisplayFormat("MM/dd/yyyy")
         self.report_start_date.setCalendarPopup(True)
         self.report_start_date.setMinimumWidth(140)
 
         date_label_to = QLabel("To:")
+        date_label_to.setStyleSheet("color:#64748b; font-weight:600;")
         self.report_end_date = QDateEdit()
         self.report_end_date.setDisplayFormat("MM/dd/yyyy")
         self.report_end_date.setCalendarPopup(True)
@@ -18401,14 +18803,15 @@ class PDFViewer(QMainWindow):
         generate_report_btn.setMinimumWidth(120)
         generate_report_btn.setStyleSheet("""
             QPushButton {
-                background-color: #27ae60;
+                background-color: #2563eb;
                 color: white;
-                border-radius: 4px;
-                padding: 4px 12px;
-                font-weight: bold;
+                border: none;
+                border-radius: 8px;
+                padding: 6px 14px;
+                font-weight: 600;
             }
             QPushButton:hover {
-                background-color: #219a52;
+                background-color: #1d4ed8;
             }
         """)
         generate_report_btn.clicked.connect(self._generate_last_report)
@@ -23099,10 +23502,8 @@ class PDFViewer(QMainWindow):
         folder_setup_action.triggered.connect(self.show_folder_setup_wizard)
         settings_menu.addAction(folder_setup_action)
         
-        # Window menu
-        self.window_menu = menubar.addMenu('Window')
-        self.window_menu.aboutToShow.connect(self.update_window_menu)
-        
+        # (Window menu removed — it served no purpose in the tabbed UI.)
+
         # Help menu
         help_menu = menubar.addMenu('Help')
         
@@ -23116,25 +23517,8 @@ class PDFViewer(QMainWindow):
         uninstall_action.triggered.connect(self.uninstall_application)
         help_menu.addAction(uninstall_action)
 
-        # Inventory menu
-        inventory_menu = menubar.addMenu('Inventory')
-
-        export_template_action = QAction('Export Excel Template…', self)
-        export_template_action.setToolTip('Save an Excel template you can fill out for bulk import')
-        export_template_action.triggered.connect(self.export_inventory_template)
-        inventory_menu.addAction(export_template_action)
-
-        import_excel_action = QAction('Import Inventory from Excel…', self)
-        import_excel_action.setToolTip('Import items from an Excel (.xlsx) or CSV file; creates per-item files automatically')
-        import_excel_action.triggered.connect(self.import_inventory_from_excel)
-        inventory_menu.addAction(import_excel_action)
-
-        inventory_menu.addSeparator()
-
-        clear_inventory_action = QAction('Clear All Inventory…', self)
-        clear_inventory_action.setToolTip('Delete all inventory items and transactions')
-        clear_inventory_action.triggered.connect(self.clear_all_inventory)
-        inventory_menu.addAction(clear_inventory_action)
+        # (Inventory menu removed — its actions now live as buttons on the DME
+        # Inventory tab: Export Template / Import from Excel / Clear All Inventory.)
 
         # Reports menu
         reports_menu = menubar.addMenu('Reports')
@@ -23171,6 +23555,31 @@ class PDFViewer(QMainWindow):
         rc_settings_action.setToolTip('Configure RingCentral connection')
         rc_settings_action.triggered.connect(self.show_ringcentral_settings)
         comms_menu.addAction(rc_settings_action)
+
+        # Nova menu — assistant launcher + enable/disable toggle.
+        try:
+            from dmelogic.features import nova_enabled as _nova_enabled
+            nova_menu = menubar.addMenu('Nova')
+
+            launch_nova_action = QAction('🟣 Launch Nova...', self)
+            launch_nova_action.setToolTip('Start Nova (if needed) and open the Nova assistant')
+            launch_nova_action.triggered.connect(self.launch_nova)
+            nova_menu.addAction(launch_nova_action)
+
+            nova_menu.addSeparator()
+
+            enable_nova_action = QAction('Enable Nova on startup', self)
+            enable_nova_action.setCheckable(True)
+            try:
+                enable_nova_action.setChecked(bool(_nova_enabled()))
+            except Exception:
+                enable_nova_action.setChecked(False)
+            enable_nova_action.setToolTip('Start Nova background services automatically each launch')
+            enable_nova_action.toggled.connect(self.set_nova_enabled)
+            nova_menu.addAction(enable_nova_action)
+            self._enable_nova_action = enable_nova_action
+        except Exception as _e:
+            print(f"Nova menu unavailable: {_e}")
 
         # Tools menu (restored). Provides quick access to fax prep and utilities.
         tools_menu = menubar.addMenu('Tools')
@@ -25617,6 +26026,17 @@ class PDFViewer(QMainWindow):
         dialog.setWindowTitle("Add New Patient")
         dialog.setWindowModality(Qt.WindowModality.ApplicationModal)  # Ensure modal behavior
         dialog.resize(900, 680)  # Wider for two-column demographics + insurance layout
+        # Modern light-theme styling, consistent with the main tabs. Normalizes
+        # the inherited label color and gives inputs the white rounded look.
+        dialog.setStyleSheet(
+            "QDialog { background:#f3f5f9; }"
+            "QLabel { color:#334155; font-weight:600; background:transparent; }"
+            "QLineEdit, QComboBox, QTextEdit {"
+            " background:#ffffff; color:#0f172a; border:1px solid #e2e8f0;"
+            " border-radius:8px; padding:7px 10px; }"
+            "QLineEdit:focus, QComboBox:focus, QTextEdit:focus { border-color:#2563eb; }"
+            "QScrollArea { background:transparent; border:none; }"
+        )
         
         # Prevent dialog from closing on Enter key press in fields
         dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
@@ -25747,18 +26167,32 @@ class PDFViewer(QMainWindow):
         button_layout = QHBoxLayout()
         button_layout.addStretch()
         
-        save_btn = QPushButton("💾 Save Patient")
+        save_btn = QPushButton("💾  Save Patient")
         save_btn.setDefault(False)  # Don't make it the default button
         save_btn.setAutoDefault(False)  # Prevent Enter key triggering
         save_btn.setMinimumWidth(120)
-        
+        save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Primary action: filled accent.
+        save_btn.setStyleSheet(
+            "QPushButton { background:#2563eb; color:white; font-weight:600;"
+            " padding:8px 18px; border:none; border-radius:8px; }"
+            "QPushButton:hover { background:#1d4ed8; }"
+        )
+
         cancel_btn = QPushButton("Cancel")
         cancel_btn.setDefault(False)
         cancel_btn.setAutoDefault(False)
         cancel_btn.setMinimumWidth(80)
-        
-        button_layout.addWidget(save_btn)
+        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Secondary action: neutral ghost button.
+        cancel_btn.setStyleSheet(
+            "QPushButton { background:#ffffff; color:#0f172a; font-weight:600;"
+            " padding:8px 18px; border:1px solid #e2e8f0; border-radius:8px; }"
+            "QPushButton:hover { background:#f1f5f9; border-color:#cbd5e1; }"
+        )
+
         button_layout.addWidget(cancel_btn)
+        button_layout.addWidget(save_btn)
         main_layout.addLayout(button_layout)
 
         def save_patient():
@@ -36425,8 +36859,16 @@ class PDFViewer(QMainWindow):
         if db_folder:
             search_dirs.append(db_folder)
             search_dirs.append(os.path.join(db_folder, 'reference'))
-        assets = os.path.join(base_dir, "assets")
-        search_dirs.append(assets)
+        # Bundled assets can live next to this file OR at the project/install
+        # root (e.g. C:\DMELOGIC-v5\assets). Walk a few parents so the shipped
+        # MEDICAID_FEE_SCHED_*.xlsx is found without a manual Browse.
+        try:
+            from pathlib import Path as _P
+            here = _P(os.path.abspath(__file__))
+            for up in (here.parent, *here.parents[:4]):
+                search_dirs.append(str(up / "assets"))
+        except Exception:
+            search_dirs.append(os.path.join(base_dir, "assets"))
         search_dirs.append(base_dir)
 
         patterns = ["MEDICAID_FEE_SCHED_*.xlsx", "DME_Fee_Schedule*.xlsx", "*.xlsx"]
@@ -37188,6 +37630,32 @@ class PDFViewer(QMainWindow):
             )
             return
 
+        # 5b) Keep the Del/PU date meaningful: only Delivered / Picked Up /
+        # Shipped carry a delivery date. Any other status clears it so stale
+        # sentinel dates (e.g. 01/01/2000) don't linger. (Shipped is normally
+        # set from the ePACES helper, but we honor it here too for consistency.)
+        try:
+            from datetime import date as _date
+            _DATE_STATUSES = {"Delivered", "Picked Up", "Shipped"}
+            _conn = sqlite3.connect(self.orders_database_file)
+            _cur = _conn.cursor()
+            if new_status_str in _DATE_STATUSES:
+                _cur.execute("SELECT delivery_date FROM orders WHERE id=?", (order_id,))
+                _row = _cur.fetchone()
+                _cur_dd = (_row[0] if _row else None) or ""
+                if not _cur_dd or _cur_dd in ("01/01/2000", "1/1/2000"):
+                    _cur.execute(
+                        "UPDATE orders SET delivery_date=? WHERE id=?",
+                        (_date.today().strftime("%Y-%m-%d"), order_id),
+                    )
+            else:
+                _cur.execute(
+                    "UPDATE orders SET delivery_date=NULL WHERE id=?", (order_id,))
+            _conn.commit()
+            _conn.close()
+        except Exception as _e:
+            print(f"delivery-date sync on status change failed: {_e}")
+
         # 6) Refresh UI and reselect row
         try:
             self.load_orders()
@@ -37296,18 +37764,38 @@ class PDFViewer(QMainWindow):
     def create_fee_schedule_tab(self):
         """Create tab to search the Medicaid fee schedule Excel file."""
         fee_tab = QWidget()
+        fee_tab.setObjectName("feeTab")
+        fee_tab.setStyleSheet(
+            "#feeTab { background:#f3f5f9; }"
+            "#feeTab QLineEdit#feeSearch { background:#ffffff; color:#0f172a;"
+            " border:1px solid #e2e8f0; border-radius:18px; padding:8px 14px; }"
+            "#feeTab QLineEdit#feeSearch:focus { border-color:#2563eb; }"
+            "#feeTab QComboBox { background:#ffffff; color:#0f172a;"
+            " border:1px solid #e2e8f0; border-radius:8px; padding:6px 10px; min-width:130px; }"
+            "#feeTab QComboBox:hover { border-color:#cbd5e1; }"
+        )
         layout = QVBoxLayout(fee_tab)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
 
-        header = QLabel("💲 Medicaid Fee Schedule Search")
-        header.setStyleSheet("font-size: 18px; font-weight: bold; color: #0078D4; padding: 10px; border-bottom: 2px solid #424242; margin-bottom: 8px;")
+        header = QLabel("Medicaid Fee Schedule")
+        header.setStyleSheet("font-size:22px; font-weight:700; color:#0f172a;")
+        subtitle = QLabel("Search HCPCS codes, fees, and coverage rules from the fee schedule file.")
+        subtitle.setStyleSheet("font-size:12px; color:#64748b;")
         layout.addWidget(header)
+        layout.addWidget(subtitle)
+
+        from dmelogic.ui.main_window import _style_action_buttons as _sab_fee
 
         # Controls
         controls = QHBoxLayout()
+        controls.setSpacing(8)
         self.fee_search_input = QLineEdit()
-        self.fee_search_input.setPlaceholderText("Search by code, description, or value…")
+        self.fee_search_input.setObjectName("feeSearch")
+        self.fee_search_input.setPlaceholderText("🔍  Search by code, description, or value…")
+        self.fee_search_input.setMinimumWidth(280)
         self.fee_search_input.returnPressed.connect(self.search_fee_schedule)
-        controls.addWidget(self.fee_search_input)
+        controls.addWidget(self.fee_search_input, 2)
 
         self.fee_column_combo = QComboBox()
         self.fee_column_combo.addItem("All Columns", "__all__")
@@ -37326,17 +37814,46 @@ class PDFViewer(QMainWindow):
         self.fee_browse_btn.clicked.connect(self.choose_fee_schedule_file)
         controls.addWidget(self.fee_browse_btn)
 
+        _sab_fee(
+            primary=[self.fee_search_btn],
+            ghost=[self.fee_refresh_btn, self.fee_browse_btn],
+        )
+
         controls.addStretch()
         layout.addLayout(controls)
 
         # Table
         self.fee_table = QTableWidget(0, 0)
         self.fee_table.setWordWrap(True)
+        self.fee_table.setShowGrid(False)
+        self.fee_table.setAlternatingRowColors(True)
+        self.fee_table.verticalHeader().setVisible(False)
+        self.fee_table.setStyleSheet("""
+            QTableWidget {
+                background-color: #ffffff;
+                color: #0f172a;
+                border: 1px solid #e2e8f0;
+                border-radius: 10px;
+                gridline-color: #e2e8f0;
+                alternate-background-color: #f8fafc;
+                selection-background-color: #e8f0fe;
+                selection-color: #0f172a;
+            }
+            QTableWidget::item { padding: 6px 8px; }
+            QHeaderView::section {
+                background-color: #f8fafc;
+                color: #64748b;
+                font-weight: 600;
+                padding: 8px;
+                border: none;
+                border-bottom: 1px solid #e2e8f0;
+            }
+        """)
         layout.addWidget(self.fee_table)
 
         # Status
         self.fee_status = QLabel("Ready")
-        self.fee_status.setStyleSheet("color: #888888; padding: 4px;")
+        self.fee_status.setStyleSheet("color: #64748b; font-size:12px; padding: 4px;")
         layout.addWidget(self.fee_status)
 
         # Data holders
@@ -37360,93 +37877,132 @@ class PDFViewer(QMainWindow):
         and manage queue items with priorities and assignments.
         """
         queues_tab = QWidget()
+        queues_tab.setObjectName("queuesTab")
+        queues_tab.setStyleSheet(
+            "#queuesTab { background:#f3f5f9; }"
+            "#queuesTab QListWidget { background:#ffffff; border:1px solid #e2e8f0;"
+            " border-radius:10px; padding:4px; }"
+            "#queuesTab QListWidget::item { padding:8px 10px; border-radius:6px; }"
+            "#queuesTab QListWidget::item:selected { background:#e8f0fe; color:#0f172a; }"
+            "#queuesTab QTableWidget { background:#ffffff; border:1px solid #e2e8f0;"
+            " border-radius:10px; gridline-color:#e2e8f0;"
+            " alternate-background-color:#f8fafc;"
+            " selection-background-color:#e8f0fe; selection-color:#0f172a; }"
+            "#queuesTab QTableWidget::item { padding:6px 8px; }"
+            "#queuesTab QHeaderView::section { background:#f8fafc; color:#64748b;"
+            " font-weight:600; padding:8px; border:none; border-bottom:1px solid #e2e8f0; }"
+        )
         main_layout = QVBoxLayout(queues_tab)
+        main_layout.setContentsMargins(20, 18, 20, 18)
+        main_layout.setSpacing(12)
 
-        header = QLabel("📥 Workflow Queues")
-        header.setStyleSheet("font-size:18px;font-weight:bold;color:#0078D4;padding:8px;border-bottom:1px solid #424242")
+        from dmelogic.ui.main_window import _style_action_buttons as _sab_q
+
+        header = QLabel("Workflow Queues")
+        header.setStyleSheet("font-size:22px; font-weight:700; color:#0f172a;")
+        header.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        subtitle = QLabel("Organize orders into custom queues and track them through your workflow.")
+        subtitle.setStyleSheet("font-size:12px; color:#64748b;")
+        subtitle.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         main_layout.addWidget(header)
+        main_layout.addWidget(subtitle)
 
         # Split view: Queue list on left, queue items on right
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        
+
         # Left panel: Queue management
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
-        
+        left_layout.setContentsMargins(0, 0, 0, 0)
+
         queue_controls = QHBoxLayout()
         self.add_queue_btn = QPushButton("➕ New Queue")
-        self.add_queue_btn.setStyleSheet("background:#27ae60;color:white;padding:6px 12px;border-radius:4px")
         self.add_queue_btn.clicked.connect(self.create_new_queue)
         queue_controls.addWidget(self.add_queue_btn)
-        
-        self.edit_queue_btn = QPushButton("✏️ Edit Queue")
-        self.edit_queue_btn.setStyleSheet("background:#3498db;color:white;padding:6px 12px;border-radius:4px")
+
+        self.edit_queue_btn = QPushButton("✏️ Edit")
         self.edit_queue_btn.clicked.connect(self.edit_selected_queue)
         queue_controls.addWidget(self.edit_queue_btn)
-        
-        self.delete_queue_btn = QPushButton("🗑️ Delete Queue")
-        self.delete_queue_btn.setStyleSheet("background:#e74c3c;color:white;padding:6px 12px;border-radius:4px")
+
+        self.delete_queue_btn = QPushButton("🗑️ Delete")
         self.delete_queue_btn.clicked.connect(self.delete_selected_queue)
         queue_controls.addWidget(self.delete_queue_btn)
-        
+
         self.refresh_queues_btn = QPushButton("🔄")
         self.refresh_queues_btn.clicked.connect(self.load_queues_list)
         queue_controls.addWidget(self.refresh_queues_btn)
         queue_controls.addStretch()
         left_layout.addLayout(queue_controls)
-        
+
+        _sab_q(
+            primary=[self.add_queue_btn],
+            danger=[self.delete_queue_btn],
+            ghost=[self.edit_queue_btn, self.refresh_queues_btn],
+        )
+
         self.queues_list = QListWidget()
         self.queues_list.currentItemChanged.connect(self.on_queue_selected)
         left_layout.addWidget(self.queues_list)
-        
+
         # Right panel: Queue items
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
-        
+        right_layout.setContentsMargins(0, 0, 0, 0)
+
         self.queue_title_label = QLabel("Select a queue")
-        self.queue_title_label.setStyleSheet("font-size:16px;font-weight:bold;color:#0078D4;padding:4px")
+        self.queue_title_label.setStyleSheet("font-size:16px; font-weight:700; color:#0f172a; padding:4px")
         right_layout.addWidget(self.queue_title_label)
-        
+
         item_controls = QHBoxLayout()
         self.add_to_queue_btn = QPushButton("➕ Add Order to Queue")
-        self.add_to_queue_btn.setStyleSheet("background:#27ae60;color:white;padding:6px 12px;border-radius:4px")
         self.add_to_queue_btn.clicked.connect(self.add_order_to_queue)
         self.add_to_queue_btn.setEnabled(False)
         item_controls.addWidget(self.add_to_queue_btn)
-        
+
         self.remove_from_queue_btn = QPushButton("➖ Remove from Queue")
-        self.remove_from_queue_btn.setStyleSheet("background:#e74c3c;color:white;padding:6px 12px;border-radius:4px")
         self.remove_from_queue_btn.clicked.connect(self.remove_from_queue)
         self.remove_from_queue_btn.setEnabled(False)
         item_controls.addWidget(self.remove_from_queue_btn)
-        
+
         self.open_order_from_queue_btn = QPushButton("📂 Open Order")
-        self.open_order_from_queue_btn.setStyleSheet("background:#3498db;color:white;padding:6px 12px;border-radius:4px")
         self.open_order_from_queue_btn.clicked.connect(self.open_order_from_queue)
         self.open_order_from_queue_btn.setEnabled(False)
         item_controls.addWidget(self.open_order_from_queue_btn)
-        
+
         item_controls.addStretch()
         right_layout.addLayout(item_controls)
-        
+
+        _sab_q(
+            primary=[self.add_to_queue_btn],
+            danger=[self.remove_from_queue_btn],
+            ghost=[self.open_order_from_queue_btn],
+        )
+
         self.queue_items_table = QTableWidget(0, 7)
         self.queue_items_table.setHorizontalHeaderLabels(["Order ID", "Patient", "Order Date", "Status", "Priority", "Assigned To", "Notes"])
         self.queue_items_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.queue_items_table.setShowGrid(False)
+        self.queue_items_table.setAlternatingRowColors(True)
+        self.queue_items_table.verticalHeader().setVisible(False)
+        self.queue_items_table.verticalHeader().setDefaultSectionSize(34)
         self.queue_items_table.itemSelectionChanged.connect(self.on_queue_item_selected)
         self.queue_items_table.itemDoubleClicked.connect(self.open_order_from_queue)
         right_layout.addWidget(self.queue_items_table)
-        
+
         self.queue_status = QLabel("Ready")
-        self.queue_status.setStyleSheet("color:#888;padding:4px")
+        self.queue_status.setStyleSheet("color:#64748b; font-size:12px; padding:4px")
         right_layout.addWidget(self.queue_status)
         
         splitter.addWidget(left_panel)
         splitter.addWidget(right_panel)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 2)
-        
-        main_layout.addWidget(splitter)
-        
+
+        # Give the splitter ALL remaining vertical space so it fills from just
+        # under the header down to the bottom — eliminates the dead gap that
+        # appeared when the layout had no stretched item to absorb the slack.
+        main_layout.addWidget(splitter, 1)
+
         self.main_tabs.addTab(queues_tab, "Queues")
         self.load_queues_list()
 
@@ -37470,7 +38026,9 @@ class PDFViewer(QMainWindow):
                 display_text = f"{icon} {name} ({count})"
                 item = QListWidgetItem(display_text)
                 item.setData(Qt.ItemDataRole.UserRole, queue_id)
-                item.setForeground(QColor(color or '#FFFFFF'))
+                # Use the queue's color if set, else dark slate (readable on the
+                # white list — the old #FFFFFF fallback was invisible).
+                item.setForeground(QColor(color or '#0f172a'))
                 self.queues_list.addItem(item)
             
             if rows:
@@ -38039,45 +38597,91 @@ class PDFViewer(QMainWindow):
     def create_tasks_tab(self):
         """Create the Tasks management tab (simplified restoration)."""
         tasks_tab = QWidget()
+        tasks_tab.setObjectName("tasksTab")
+        tasks_tab.setStyleSheet(
+            "#tasksTab { background:#f3f5f9; }"
+            "#tasksTab QComboBox { background:#ffffff; color:#0f172a;"
+            " border:1px solid #e2e8f0; border-radius:8px; padding:6px 10px; min-width:140px; }"
+            "#tasksTab QComboBox:hover { border-color:#cbd5e1; }"
+        )
         layout = QVBoxLayout(tasks_tab)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+
+        from dmelogic.ui.main_window import _style_action_buttons as _sab_tasks
 
         header_row = QHBoxLayout()
-        header = QLabel("✅ Tasks")
-        header.setStyleSheet("font-size:18px;font-weight:bold;color:#27ae60;padding:8px")
+        header = QLabel("Tasks")
+        header.setStyleSheet("font-size:22px; font-weight:700; color:#0f172a;")
         header_row.addWidget(header)
         header_row.addStretch()
+        # Bulk delete (acts on checked rows).
+        self.delete_selected_tasks_btn = QPushButton("🗑️ Delete Selected")
+        self.delete_selected_tasks_btn.setToolTip("Delete all tasks checked in the leftmost column")
+        self.delete_selected_tasks_btn.clicked.connect(self.delete_checked_tasks)
+        header_row.addWidget(self.delete_selected_tasks_btn)
         self.new_task_btn = QPushButton("➕ New Task")
-        self.new_task_btn.setStyleSheet("background:#27ae60;color:white;padding:6px 12px;border-radius:4px")
         self.new_task_btn.clicked.connect(lambda: self.open_task_dialog())
         header_row.addWidget(self.new_task_btn)
+        _sab_tasks(primary=[self.new_task_btn], danger=[self.delete_selected_tasks_btn])
         layout.addLayout(header_row)
 
         filters = QHBoxLayout()
-        self.tasks_assignee_filter = QComboBox(); self.tasks_assignee_filter.addItems(["All Assignees","Me","Admin","Billing","Inventory","Delivery","Unassigned"]) 
+        self.tasks_assignee_filter = QComboBox(); self.tasks_assignee_filter.addItems(["All Assignees","Me","Admin","Billing","Inventory","Delivery","Unassigned"])
         self.tasks_assignee_filter.currentIndexChanged.connect(self.load_tasks_table)
         filters.addWidget(self.tasks_assignee_filter)
-        self.tasks_status_filter = QComboBox(); self.tasks_status_filter.addItems(["All Statuses","Pending","In Progress","Waiting","Completed","Cancelled"]) 
+        self.tasks_status_filter = QComboBox(); self.tasks_status_filter.addItems(["All Statuses","Pending","In Progress","Waiting","Completed","Cancelled"])
         self.tasks_status_filter.currentIndexChanged.connect(self.load_tasks_table)
         filters.addWidget(self.tasks_status_filter)
-        self.tasks_priority_filter = QComboBox(); self.tasks_priority_filter.addItems(["All Priorities","Urgent","High","Normal","Low"]) 
+        self.tasks_priority_filter = QComboBox(); self.tasks_priority_filter.addItems(["All Priorities","Urgent","High","Normal","Low"])
         self.tasks_priority_filter.currentIndexChanged.connect(self.load_tasks_table)
         filters.addWidget(self.tasks_priority_filter)
         self.tasks_refresh_btn = QPushButton("🔄 Refresh")
         self.tasks_refresh_btn.clicked.connect(self.load_tasks_table)
+        _sab_tasks(ghost=[self.tasks_refresh_btn])
         filters.addWidget(self.tasks_refresh_btn)
         filters.addStretch()
         layout.addLayout(filters)
 
         self.tasks_table = QTableWidget(0, 8)
-        self.tasks_table.setHorizontalHeaderLabels(["ID","✓","Priority","Due Date","Title","Patient","Assigned To","Status"])
+        # Column 1 is now a selection checkbox (header shows a select-all toggle).
+        self.tasks_table.setHorizontalHeaderLabels(["ID","☑","Priority","Due Date","Title","Patient","Assigned To","Status"])
         self.tasks_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.tasks_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.tasks_table.itemDoubleClicked.connect(self.edit_selected_task)
         self.tasks_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tasks_table.customContextMenuRequested.connect(self.show_tasks_context_menu)
+        self.tasks_table.setShowGrid(False)
+        self.tasks_table.setAlternatingRowColors(True)
+        self.tasks_table.verticalHeader().setVisible(False)
+        self.tasks_table.verticalHeader().setDefaultSectionSize(34)
+        # Click the column-1 header to toggle select-all.
+        self.tasks_table.horizontalHeader().sectionClicked.connect(self._on_tasks_header_clicked)
+        self.tasks_table.setStyleSheet("""
+            QTableWidget {
+                background-color: #ffffff;
+                color: #0f172a;
+                border: 1px solid #e2e8f0;
+                border-radius: 10px;
+                gridline-color: #e2e8f0;
+                alternate-background-color: #f8fafc;
+                selection-background-color: #e8f0fe;
+                selection-color: #0f172a;
+            }
+            QTableWidget::item { padding: 6px 8px; }
+            QHeaderView::section {
+                background-color: #f8fafc;
+                color: #64748b;
+                font-weight: 600;
+                padding: 8px;
+                border: none;
+                border-bottom: 1px solid #e2e8f0;
+            }
+        """)
         layout.addWidget(self.tasks_table)
 
         self.tasks_status_label = QLabel("Ready")
-        self.tasks_status_label.setStyleSheet("color:#888;padding:4px")
+        self.tasks_status_label.setStyleSheet("color:#64748b; font-size:12px; padding:4px")
         layout.addWidget(self.tasks_status_label)
 
         self.main_tabs.addTab(tasks_tab, "Tasks")
@@ -38117,14 +38721,23 @@ class PDFViewer(QMainWindow):
             for r in rows:
                 tid, title, status_v, priority_v, due, assigned, notes, completed, patient = r
                 row = self.tasks_table.rowCount(); self.tasks_table.insertRow(row)
-                completed_flag = '✔' if status_v == 'Completed' or completed else ''
-                color = '#95a5a6' if completed_flag else ('#e74c3c' if due and due < datetime.now().strftime('%Y-%m-%d') and status_v != 'Completed' else ('#f39c12' if due == datetime.now().strftime('%Y-%m-%d') else 'white'))
-                values = [str(tid), completed_flag, priority_v, due or '', title, patient or '', assigned or '', status_v]
+                is_completed = (status_v == 'Completed' or completed)
+                color = '#94a3b8' if is_completed else ('#dc2626' if due and due < datetime.now().strftime('%Y-%m-%d') and status_v != 'Completed' else ('#d97706' if due == datetime.now().strftime('%Y-%m-%d') else '#0f172a'))
+                values = [str(tid), None, priority_v, due or '', title, patient or '', assigned or '', status_v]
                 for col, val in enumerate(values):
+                    if col == 1:
+                        # Selection checkbox column (for bulk delete).
+                        chk = QTableWidgetItem()
+                        chk.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+                        chk.setCheckState(Qt.CheckState.Unchecked)
+                        chk.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                        self.tasks_table.setItem(row, col, chk)
+                        continue
                     item = QTableWidgetItem(val)
-                    if col in (3,4):
+                    if col in (3, 4):
                         item.setForeground(QColor(color))
                     self.tasks_table.setItem(row, col, item)
+            self._tasks_select_all_state = False
             self.tasks_status_label.setText(f"Loaded {len(rows)} tasks")
         except Exception as e:
             self.tasks_status_label.setText(f"Error loading tasks: {e}")
@@ -38255,6 +38868,60 @@ class PDFViewer(QMainWindow):
                 self.tasks_status_label.setText(f"Task #{tid} deleted")
             except Exception as e:
                 QMessageBox.critical(self, "Tasks", f"Failed to delete task: {e}")
+
+    def _on_tasks_header_clicked(self, section: int):
+        """Click the checkbox column header to toggle select-all."""
+        if section != 1:
+            return
+        new_state = not getattr(self, "_tasks_select_all_state", False)
+        self._tasks_select_all_state = new_state
+        check = Qt.CheckState.Checked if new_state else Qt.CheckState.Unchecked
+        for row in range(self.tasks_table.rowCount()):
+            item = self.tasks_table.item(row, 1)
+            if item is not None:
+                item.setCheckState(check)
+
+    def _checked_task_ids(self) -> list[str]:
+        """Return the task IDs of all checked rows."""
+        ids = []
+        for row in range(self.tasks_table.rowCount()):
+            chk = self.tasks_table.item(row, 1)
+            id_item = self.tasks_table.item(row, 0)
+            if chk is not None and id_item is not None \
+                    and chk.checkState() == Qt.CheckState.Checked:
+                ids.append(id_item.text())
+        return ids
+
+    def delete_checked_tasks(self):
+        """Bulk-delete every task whose checkbox is ticked."""
+        ids = self._checked_task_ids()
+        if not ids:
+            QMessageBox.information(
+                self, "Delete Tasks",
+                "No tasks are checked. Tick the checkbox column to select tasks first."
+            )
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Delete Tasks",
+            f"Delete {len(ids)} selected task(s)? This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            conn = sqlite3.connect(self.orders_database_file)
+            cur = conn.cursor()
+            cur.executemany("DELETE FROM tasks WHERE id = ?", [(i,) for i in ids])
+            conn.commit()
+            conn.close()
+            self.load_tasks_table()
+            self.tasks_status_label.setText(f"Deleted {len(ids)} task(s)")
+        except Exception as e:
+            QMessageBox.critical(self, "Tasks", f"Failed to delete tasks: {e}")
 
     def process_refill_from_history(self):
         """Create a refill for the selected order in the Patient Order History table."""
@@ -39262,72 +39929,122 @@ class PDFViewer(QMainWindow):
     def create_icd10_search_tab(self):
         """Create a dedicated ICD-10 code search tab"""
         icd_tab = QWidget()
+        icd_tab.setObjectName("icdTab")
+        icd_tab.setStyleSheet(
+            "#icdTab { background:#f3f5f9; }"
+            "#icdTab QGroupBox { background:#ffffff; border:1px solid #e2e8f0;"
+            " border-radius:10px; margin-top:10px; padding-top:12px; font-weight:600;"
+            " color:#475569; }"
+            "#icdTab QGroupBox::title { subcontrol-origin:margin; left:10px;"
+            " padding:0 8px; }"
+            "#icdTab QLineEdit#icdSearch { background:#ffffff; color:#0f172a;"
+            " border:1px solid #e2e8f0; border-radius:18px; padding:9px 16px;"
+            " font-size:13px; }"
+            "#icdTab QLineEdit#icdSearch:focus { border-color:#2563eb; }"
+            "#icdTab QLabel { color:#334155; }"
+        )
         layout = QVBoxLayout(icd_tab)
-        
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+
+        from dmelogic.ui.main_window import _style_action_buttons as _sab_icd
+
         # Header
-        header = QLabel("🔍 ICD-10 Code Search")
-        header.setStyleSheet("font-size: 20px; font-weight: bold; color: #0f172a; padding: 10px;")
+        header = QLabel("ICD-10 Code Search")
+        header.setStyleSheet("font-size:22px; font-weight:700; color:#0f172a;")
+        info = QLabel("Search ICD-10 diagnosis codes via the NIH ClinicalTables database.")
+        info.setStyleSheet("color:#64748b; font-size:12px;")
         layout.addWidget(header)
-        
-        # Info text
-        info = QLabel("Search for ICD-10 diagnosis codes using the NIH ClinicalTables database")
-        info.setStyleSheet("color: #aaaaaa; font-style: italic; padding: 5px;")
         layout.addWidget(info)
-        
+
         # Search section
         search_group = QGroupBox("Search")
         search_layout = QVBoxLayout(search_group)
-        
+
         search_input_layout = QHBoxLayout()
-        search_input_layout.addWidget(QLabel("Search Term:"))
+        search_input_layout.setSpacing(8)
+        term_lbl = QLabel("Search Term:")
+        term_lbl.setStyleSheet("color:#334155; font-weight:600;")
+        search_input_layout.addWidget(term_lbl)
         self.icd_search_input = QLineEdit()
+        self.icd_search_input.setObjectName("icdSearch")
         self.icd_search_input.setPlaceholderText("Enter diagnosis, symptom, or condition (e.g., asthma, diabetes, hypertension)")
         self.icd_search_input.returnPressed.connect(self.perform_icd10_tab_search)
         search_input_layout.addWidget(self.icd_search_input)
-        
+
         search_btn = QPushButton("🔍 Search")
         search_btn.clicked.connect(self.perform_icd10_tab_search)
-        search_btn.setStyleSheet("QPushButton { background-color: #0078D4; color: white; padding: 8px 16px; font-weight: bold; }")
         search_input_layout.addWidget(search_btn)
-        
+
         search_layout.addLayout(search_input_layout)
         layout.addWidget(search_group)
-        
+
         # Results section
         results_group = QGroupBox("Search Results")
         results_layout = QVBoxLayout(results_group)
-        
+
         self.icd_results_table = QTableWidget()
         self.icd_results_table.setColumnCount(2)
         self.icd_results_table.setHorizontalHeaderLabels(["Code", "Description"])
         self.icd_results_table.horizontalHeader().setStretchLastSection(True)
-        self.icd_results_table.setColumnWidth(0, 120)
+        self.icd_results_table.setColumnWidth(0, 130)
         self.icd_results_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.icd_results_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.icd_results_table.setAlternatingRowColors(True)
+        self.icd_results_table.setShowGrid(False)
+        self.icd_results_table.verticalHeader().setVisible(False)
+        self.icd_results_table.verticalHeader().setDefaultSectionSize(36)
+        # Slightly larger, friendlier font for readability.
+        _icd_font = QFont("Segoe UI", 11)
+        self.icd_results_table.setFont(_icd_font)
+        self.icd_results_table.setStyleSheet("""
+            QTableWidget {
+                background-color: #ffffff;
+                color: #0f172a;
+                border: 1px solid #e2e8f0;
+                border-radius: 10px;
+                gridline-color: #e2e8f0;
+                alternate-background-color: #f8fafc;
+                selection-background-color: #e8f0fe;
+                selection-color: #0f172a;
+            }
+            QTableWidget::item { padding: 8px 10px; }
+            QHeaderView::section {
+                background-color: #f8fafc;
+                color: #64748b;
+                font-weight: 600;
+                padding: 8px 10px;
+                border: none;
+                border-bottom: 1px solid #e2e8f0;
+            }
+        """)
+        # Monospace, bold code column for scannability; wrap long descriptions.
+        self.icd_results_table.setWordWrap(True)
         results_layout.addWidget(self.icd_results_table)
-        
+
         # Status label
         self.icd_status_label = QLabel("Enter search terms and click Search")
-        self.icd_status_label.setStyleSheet("color: #aaaaaa; font-style: italic; padding: 5px;")
+        self.icd_status_label.setStyleSheet("color:#64748b; font-style:italic; padding:4px;")
         results_layout.addWidget(self.icd_status_label)
-        
-        layout.addWidget(results_group)
-        
+
+        layout.addWidget(results_group, 1)
+
         # Action buttons
         action_layout = QHBoxLayout()
         action_layout.addStretch()
-        
+
         copy_code_btn = QPushButton("📋 Copy Code")
         copy_code_btn.clicked.connect(self.copy_selected_icd_code)
         action_layout.addWidget(copy_code_btn)
-        
+
         copy_full_btn = QPushButton("📋 Copy Code + Description")
         copy_full_btn.clicked.connect(self.copy_selected_icd_full)
         action_layout.addWidget(copy_full_btn)
-        
+
+        _sab_icd(primary=[search_btn, copy_full_btn], ghost=[copy_code_btn])
+
         layout.addLayout(action_layout)
-        
+
         self.main_tabs.addTab(icd_tab, "ICD-10")
     
     def perform_icd10_tab_search(self):
@@ -39381,9 +40098,26 @@ class PDFViewer(QMainWindow):
             self.icd_results_table.setRowCount(len(codes))
             for i in range(len(codes)):
                 code = str(codes[i]) if i < len(codes) else ""
-                desc = str(descriptions[i]) if i < len(descriptions) else ""
-                
+
+                # NIH returns data[3] as the display fields (sf='code,name'), so
+                # each entry is like ['I87.313', 'Chronic venous hypertension …'].
+                # Pull out just the human-readable name rather than dumping the
+                # raw list into the cell.
+                desc = ""
+                if i < len(descriptions):
+                    raw = descriptions[i]
+                    if isinstance(raw, (list, tuple)):
+                        # name is the field after the code; fall back to last.
+                        parts = [str(p) for p in raw if str(p) and str(p) != code]
+                        desc = parts[-1] if parts else (str(raw[-1]) if raw else "")
+                    else:
+                        desc = str(raw)
+
                 code_item = QTableWidgetItem(code)
+                code_font = QFont("Consolas", 11)
+                code_font.setBold(True)
+                code_item.setFont(code_font)
+                code_item.setForeground(QColor("#2563eb"))
                 desc_item = QTableWidgetItem(desc)
                 self.icd_results_table.setItem(i, 0, code_item)
                 self.icd_results_table.setItem(i, 1, desc_item)
@@ -39574,14 +40308,86 @@ class PDFViewer(QMainWindow):
             return
 
         order_num_text = order_id_item.text()
-        try:
-            parts = order_num_text.replace("ORD-", "").split("-")
-            order_id = int(parts[0])
-        except (ValueError, IndexError):
+        order_id = int(self.get_order_id_from_display(order_num_text) or 0)
+        if not order_id:
             QMessageBox.warning(self, "Error", f"Could not parse order ID from: {order_num_text}")
             return
 
-        self.print_order(order_id)
+        # Use the shared generator so this ticket matches the Order Editor /
+        # ePACES output exactly (incl. the prescriber block).
+        try:
+            from dmelogic.printing.delivery_ticket import build_delivery_ticket_pdf
+            file_path = build_delivery_ticket_pdf(
+                order_id, folder_path=getattr(self, "folder_path", None))
+            try:
+                os.startfile(file_path)
+            except Exception:
+                pass
+            QMessageBox.information(
+                self, "Delivery Ticket", f"Delivery ticket saved:\n\n{file_path}")
+        except Exception as e:
+            import traceback
+            QMessageBox.critical(
+                self, "Print Error",
+                f"Failed to print delivery ticket:\n\n{e}\n\n{traceback.format_exc()}")
+
+    def _checked_order_ids(self) -> list[int]:
+        """Return the order IDs whose checkbox (column 0 header rows) is ticked."""
+        ids: list[int] = []
+        seen = set()
+        for row in range(self.orders_table.rowCount()):
+            item = self.orders_table.item(row, 0)
+            if item is None:
+                continue
+            # Only header rows are checkable; continuation rows have no checkbox.
+            if not (item.flags() & Qt.ItemFlag.ItemIsUserCheckable):
+                continue
+            if item.checkState() != Qt.CheckState.Checked:
+                continue
+            try:
+                oid = int(self.get_order_id_from_display(item.text()) or 0)
+            except Exception:
+                oid = 0
+            if oid and oid not in seen:
+                seen.add(oid)
+                ids.append(oid)
+        return ids
+
+    def batch_print_delivery_tickets(self):
+        """Print ONE combined delivery-ticket PDF for every checked order."""
+        order_ids = self._checked_order_ids()
+        if not order_ids:
+            QMessageBox.information(
+                self, "Batch Print Tickets",
+                "No orders are checked. Tick the checkbox on one or more orders "
+                "(left column) first.")
+            return
+
+        reply = QMessageBox.question(
+            self, "Batch Print Tickets",
+            f"Generate a combined delivery-ticket PDF for {len(order_ids)} order(s)?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            from dmelogic.printing.delivery_ticket import build_delivery_tickets_combined
+            file_path = build_delivery_tickets_combined(
+                order_ids, folder_path=getattr(self, "folder_path", None))
+            try:
+                os.startfile(file_path)
+            except Exception:
+                pass
+            QMessageBox.information(
+                self, "Batch Print Tickets",
+                f"Combined delivery ticket for {len(order_ids)} order(s) saved:\n\n{file_path}")
+        except Exception as e:
+            import traceback
+            QMessageBox.critical(
+                self, "Batch Print Tickets",
+                f"Failed to generate batch tickets:\n\n{e}\n\n{traceback.format_exc()}")
 
     def print_1500_for_selected_order(self):
         """

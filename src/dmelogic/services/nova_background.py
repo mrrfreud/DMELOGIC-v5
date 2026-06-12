@@ -31,17 +31,26 @@ def _port_open(port: int) -> bool:
 
 
 def _candidate_python_paths(project_root: Path) -> list[Path]:
-    candidates = [
+    candidates: list[Path] = []
+
+    # Prefer the CURRENTLY running interpreter — it's guaranteed to be this
+    # install's Python (never another build's venv). Use its windowless
+    # pythonw.exe sibling first so Nova host processes don't pop a console.
+    if "python" in Path(sys.executable).name.lower():
+        exe = Path(sys.executable)
+        pythonw = exe.with_name("pythonw.exe")
+        if os.name == "nt" and pythonw.exists():
+            candidates.append(pythonw)
+        candidates.append(exe)
+
+    candidates += [
+        project_root / ".venv" / "Scripts" / "pythonw.exe",
         project_root / ".venv" / "Scripts" / "python.exe",
+        project_root / "venv" / "Scripts" / "pythonw.exe",
         project_root / "venv" / "Scripts" / "python.exe",
         project_root / ".venv" / "bin" / "python",
         project_root / "venv" / "bin" / "python",
     ]
-
-    # In dev mode this is typically python.exe. In frozen mode this is DMELogic.exe
-    # so we only use it if it looks like an actual Python executable.
-    if "python" in Path(sys.executable).name.lower():
-        candidates.append(Path(sys.executable))
 
     unique: list[Path] = []
     seen: set[str] = set()
@@ -65,7 +74,20 @@ def _resolve_python(project_root: Path) -> Path | None:
 
 
 def _candidate_project_roots(project_root: Path) -> list[Path]:
-    roots: list[Path] = [project_root]
+    roots: list[Path] = []
+
+    # 1. The dmelogic package directory — in v5 the Nova host scripts
+    #    (dmelogic_api.py, nova_ui_server.py) live alongside the package, e.g.
+    #    src/dmelogic/. This is the authoritative location for THIS install and
+    #    must win so we never accidentally run another build's copy.
+    try:
+        package_dir = Path(__file__).resolve().parents[1]  # …/dmelogic
+        roots.append(package_dir)
+    except Exception:
+        pass
+
+    if project_root not in roots:
+        roots.append(project_root)
 
     # Frozen mode often runs from install_root\_internal\dmelogic\..., while
     # helper scripts may live at install_root or a dev checkout.
@@ -81,10 +103,6 @@ def _candidate_project_roots(project_root: Path) -> list[Path]:
         p = Path(env_root)
         if p not in roots:
             roots.append(p)
-
-    default_dev = Path("C:/DMELOGIC MAIN")
-    if default_dev not in roots:
-        roots.append(default_dev)
 
     return roots
 

@@ -264,11 +264,10 @@ class InventorySearchDialog(QDialog):
     def on_add_new_item(self) -> None:
         """Open a dialog to add a new inventory item, then refresh the list."""
         try:
-            # Import the dialog class
-            from dmelogic.legacy import InventoryItemDialog
-            
+            from dmelogic.ui import create_inventory_item_dialog
+
             # Create and show the dialog
-            dialog = InventoryItemDialog(self)
+            dialog = create_inventory_item_dialog(self)
             dialog.setWindowTitle("Add New Inventory Item")
             
             # Connect to refresh when accepted

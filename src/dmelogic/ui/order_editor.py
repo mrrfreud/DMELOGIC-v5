@@ -143,6 +143,42 @@ class OrderEditorDialog(QDialog):
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowMinMaxButtonsHint)
         self.setMinimumSize(1200, 800)
         self.resize(1280, 850)
+
+        # Modern light theme: white-card group boxes and a clear button
+        # hierarchy — only class="primary" actions (Save Changes, Update Status,
+        # Save Items) are filled accent; everything else is a neutral ghost,
+        # replacing the old wall of identical blue buttons.
+        self.setStyleSheet("""
+            QGroupBox {
+                background: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 10px;
+                margin-top: 10px;
+                padding-top: 12px;
+                font-weight: 600;
+                color: #475569;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 8px;
+            }
+            QPushButton {
+                background: #ffffff;
+                color: #0f172a;
+                font-weight: 600;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                padding: 8px 14px;
+            }
+            QPushButton:hover { background: #f1f5f9; border-color: #cbd5e1; }
+            QPushButton:disabled { background: #f8fafc; color: #cbd5e1; }
+            QPushButton[class="primary"] {
+                background: #2563eb; color: #ffffff; border: none;
+            }
+            QPushButton[class="primary"]:hover { background: #1d4ed8; }
+            QPushButton[class="primary"]:disabled { background: #cbd5e1; color: #ffffff; }
+        """)
         
         # Main layout with splitter
         main_layout = QVBoxLayout(self)
@@ -1596,387 +1632,62 @@ class OrderEditorDialog(QDialog):
         # pdf_bytes = claim.render_to_pdf()
     
     def _print_delivery_ticket(self):
-        """Print delivery ticket using ReportLab."""
+        """Persist pending edits, then print via the shared delivery-ticket generator."""
         if not self.order:
             return
-        
         try:
-            # Save any unsaved changes to special_instructions, notes, and doctor_directions before printing
+            # Save any unsaved special_instructions / notes / doctor_directions
+            # so the freshly-reloaded order in the generator includes them.
             from dmelogic.db.orders import update_order_fields
             fields_to_save = {}
-            
+
             new_special = self.special_instructions_text.toPlainText().strip()
             if new_special != (self.order.special_instructions or "").strip():
                 fields_to_save["special_instructions"] = new_special if new_special else None
-            
+
             new_notes = self.notes_text.toPlainText().strip()
             if new_notes != (self.order.notes or "").strip() and new_notes != "No notes":
                 fields_to_save["notes"] = new_notes if new_notes else None
-            
+
             new_directions = self.doctor_directions.toPlainText().strip()
             if new_directions != (self.order.doctor_directions or "").strip() and new_directions != "No directions provided":
                 fields_to_save["doctor_directions"] = new_directions if new_directions else None
-            
+
             if fields_to_save:
                 update_order_fields(self.order.id, fields_to_save, folder_path=self.folder_path)
-            
-            # Always reload from DB so we print the latest edits (items, notes, status)
+
+            from dmelogic.printing.delivery_ticket import build_delivery_ticket_pdf
+            file_path = build_delivery_ticket_pdf(self.order_id, folder_path=self.folder_path)
+
+            # Keep the in-memory order current for the rest of the editor.
             self.order = fetch_order_with_items(self.order_id, folder_path=self.folder_path)
 
-            # Load latest inventory descriptions so tickets reflect any corrected names
-            inventory_rows = fetch_all_inventory(folder_path=self.folder_path)
-            inv_desc_by_code = {}
-            for r in inventory_rows:
-                # Normalize row to dict for safe lookups
-                try:
-                    rd = dict(r)
-                except Exception:
-                    rd = {}
-                code = str(rd.get("hcpcs_code", "") or rd.get("HCPCS", "")).upper()
-                desc_val = rd.get("description") or rd.get("DESCRIPTION") or ""
-                if code:
-                    inv_desc_by_code[code] = str(desc_val).strip()
-
             try:
-                from reportlab.lib.pagesizes import letter
-                from reportlab.lib import colors
-                from reportlab.lib.units import inch
-                from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-                from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-            except ImportError:
-                QMessageBox.critical(
-                    self,
-                    "Print Delivery Ticket",
-                    "ReportLab is not available. Please install it:\n\npip install reportlab"
-                )
-                return
-
-            import os
-            from datetime import datetime
-
-            order = self.order
-
-            # Format patient name
-            patient_name = order.patient_full_name or "N/A"
-            
-            # Format dates as MM/DD/YYYY for PDF output
-            def format_date(val):
-                if not val or val in ('01/01/2000', '1/1/2000'):
-                    return ''
-                try:
-                    # If already a date/datetime
-                    if hasattr(val, 'strftime'):
-                        return val.strftime('%m/%d/%Y')
-                    # Try ISO string
-                    from datetime import datetime
-                    return datetime.strptime(str(val), '%Y-%m-%d').strftime('%m/%d/%Y')
-                except Exception:
-                    # Fallback to raw string
-                    return str(val)
-
-            rx_date = format_date(order.rx_date)
-            order_date = format_date(order.order_date)
-            delivery_date = format_date(order.delivery_date)
-
-            # Patient info
-            patient_dob = order.patient_dob or 'N/A'
-            patient_phone = order.patient_phone or 'N/A'
-            
-            # Resolve address: patients.db (patient_id first) then order snapshot
-            patient_db_path = resolve_db_path("patients.db", folder_path=self.folder_path)
-            patient_address = get_patient_full_address(
-                patient_db_path,
-                getattr(order, "patient_id", None),
-                order.patient_last_name or "",
-                order.patient_first_name or "",
-            )
-
-            if not patient_address:
-                addr_snapshot = (
-                    getattr(order, "patient_address_at_order_time", None)
-                    or getattr(order, "patient_address", None)
-                    or ""
-                )
-                patient_address = addr_snapshot.strip()
-            
-            patient_address = patient_address or 'N/A'
-
-            # Prescriber info with fallbacks to current order fields
-            prescriber_name = (
-                order.prescriber_name_at_order_time
-                or getattr(order, "prescriber_name", None)
-                or 'N/A'
-            )
-            prescriber_npi = (
-                order.prescriber_npi_at_order_time
-                or getattr(order, "prescriber_npi", None)
-                or 'N/A'
-            )
-
-            # Order status
-            order_status = order.order_status.value if hasattr(order.order_status, 'value') else str(order.order_status)
-            
-            # Doctor directions, special instructions, and notes
-            doctor_directions = (order.doctor_directions or '').strip()
-            special_instructions = (order.special_instructions or '').strip()
-            notes = (order.notes or '').strip()
-
-            # Collect items
-            item_rows = [["HCPCS", "Description", "Qty", "Refills", "Days"]]
-            if order.items:
-                for item in order.items:
-                    full_hcpcs = (item.hcpcs_code or '').strip()
-                    # Prefer current inventory description if available; fallback to item snapshot
-                    desc = inv_desc_by_code.get(full_hcpcs.upper(), '').strip() or (item.description or '').strip()
-                    
-                    # Display full HCPCS code if multi-code (contains +), otherwise extract base code
-                    if '+' in full_hcpcs:
-                        # Multi-HCPCS code (e.g., E0244+E0243) - show full code without item suffix
-                        display_hcpcs = full_hcpcs.split('-')[0].strip() if '-' in full_hcpcs else full_hcpcs
-                    else:
-                        # Single HCPCS - remove item suffix after hyphen for cleaner display
-                        display_hcpcs = full_hcpcs.split('-')[0].strip() if '-' in full_hcpcs else full_hcpcs
-                    
-                    qty = str(item.quantity or 1)
-                    refills = str(item.refills or 0)
-                    days = str(item.days_supply or 0)
-                    
-                    item_rows.append([display_hcpcs, desc, qty, refills, days])
-            
-            if len(item_rows) == 1:
-                item_rows.append(["-", "No items", "-", "-", "-"])
-
-            # Build PDF
-            styles = getSampleStyleSheet()
-            heading_style = ParagraphStyle(
-                'Heading',
-                parent=styles['Heading2'],
-                spaceAfter=6,
-                textColor=colors.HexColor('#2c3e50')
-            )
-
-            # File path - save to Downloads folder
-            try:
-                from pathlib import Path
-                downloads = str(Path.home() / "Downloads")
-                folder_path = downloads if os.path.exists(downloads) else str(Path.home())
-            except Exception:
-                folder_path = os.getcwd()
-            ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-            order_num = self._format_order_number(order)
-            out_name = f"DeliveryTicket_{order_num}_{ts}.pdf"
-            file_path = os.path.join(folder_path, out_name)
-
-            story = []
-            story.append(Paragraph("DELIVERY TICKET", styles['Title']))
-            story.append(Spacer(1, 0.1 * inch))
-            story.append(Paragraph(f"<b>Order #:</b> {order_num}", styles['Heading3']))
-            story.append(Spacer(1, 0.15 * inch))
-
-            # Patient/Prescriber block
-            pt_tbl_data = [
-                [
-                    Paragraph("<b>Patient</b>", heading_style),
-                    '',
-                    Paragraph("<b>Prescriber</b>", heading_style)
-                ],
-                [
-                    Paragraph(f"<b>Name:</b> {patient_name}", styles['Normal']),
-                    Paragraph(
-                        f"<b>DOB:</b> {patient_dob}<br/>"
-                        f"<b>Phone:</b> {patient_phone}<br/>"
-                        f"<b>Address:</b> {patient_address}",
-                        styles['Normal']
-                    ),
-                    Paragraph(f"<b>Name:</b> {prescriber_name}", styles['Normal']),
-                ],
-                [
-                    '',
-                    '',
-                    Paragraph(f"<b>NPI:</b> {prescriber_npi}", styles['Normal'])
-                ],
-            ]
-            pt_tbl = Table(pt_tbl_data, colWidths=[1.5*inch, 3.5*inch, 3.0*inch])
-            pt_tbl.setStyle(TableStyle([
-                ('VALIGN', (0,0), (-1,-1), 'TOP'),
-                ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-            ]))
-            story.append(pt_tbl)
-            story.append(Spacer(1, 0.15 * inch))
-
-            # Order metadata
-            md_table = Table([
-                [
-                    Paragraph('<b>RX Date</b>', styles['Normal']),
-                    rx_date or 'N/A',
-                    Paragraph('<b>Order Date</b>', styles['Normal']),
-                    order_date or 'N/A'
-                ],
-            ], colWidths=[1.2*inch, 2.5*inch, 1.5*inch, 2.8*inch])
-            md_table.setStyle(TableStyle([
-                ('GRID', (0,0), (-1,-1), 0.25, colors.lightgrey),
-                ('BACKGROUND', (0,0), (-1,0), colors.whitesmoke),
-                ('VALIGN', (0,0), (-1,-1), 'TOP'),
-            ]))
-            story.append(md_table)
-            story.append(Spacer(1, 0.2 * inch))
-
-            # Items table (moved up - first section after metadata)
-            story.append(Paragraph("ITEMS", heading_style))
-            t = Table(item_rows, colWidths=[1.2*inch, 4.0*inch, 0.7*inch, 0.8*inch, 0.7*inch])
-            t.setStyle(TableStyle([
-                ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-                ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2c3e50')),
-                ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0,0), (-1,0), 10),
-                ('ALIGN', (2,0), (4,-1), 'CENTER'),
-                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                ('FONTNAME', (0,1), (-1,-1), 'Helvetica'),
-                ('FONTSIZE', (0,1), (-1,-1), 9),
-                ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f8f9fa')]),
-            ]))
-            story.append(t)
-            story.append(Spacer(1, 0.2 * inch))
-
-            # Doctor's Directions (after items)
-            if doctor_directions:
-                story.append(Paragraph("DOCTOR'S DIRECTIONS", heading_style))
-                story.append(Spacer(1, 0.1 * inch))
-                directions_text = Paragraph(
-                    doctor_directions.replace('\n', '<br/>'),
-                    ParagraphStyle(
-                        'Directions',
-                        parent=styles['Normal'],
-                        fontSize=10,
-                        leading=14,
-                        leftIndent=10,
-                        rightIndent=10,
-                        spaceAfter=10,
-                        textColor=colors.HexColor('#2c3e50'),
-                        backColor=colors.HexColor('#fffef0'),
-                        borderPadding=8,
-                        borderWidth=2,
-                        borderColor=colors.HexColor('#f0ad4e')
-                    )
-                )
-                story.append(directions_text)
-                story.append(Spacer(1, 0.2 * inch))
-
-            # Signature section
-            story.append(Spacer(1, 0.4 * inch))
-            sig_style = ParagraphStyle(
-                'Signature',
-                parent=styles['Normal'],
-                fontSize=10,
-                leading=14
-            )
-            
-            name_table = Table(
-                [[
-                    Paragraph("Print Name:", sig_style),
-                    '',
-                    Paragraph("Relationship:", sig_style),
-                    ''
-                ]],
-                colWidths=[1.2*inch, 3.0*inch, 1.3*inch, 2.2*inch],
-                rowHeights=[0.4*inch]
-            )
-            name_table.setStyle(TableStyle([
-                ('LINEBELOW', (1,0), (1,0), 1, colors.black),
-                ('LINEBELOW', (3,0), (3,0), 1, colors.black),
-                ('VALIGN', (0,0), (-1,-1), 'BOTTOM'),
-            ]))
-            story.append(name_table)
-
-            story.append(Spacer(1, 0.15 * inch))
-            sig_table = Table(
-                [[
-                    Paragraph("Signature:", sig_style),
-                    '',
-                    Paragraph("Date:", sig_style),
-                    ''
-                ]],
-                colWidths=[1.2*inch, 4.6*inch, 0.8*inch, 1.2*inch],
-                rowHeights=[0.4*inch]
-            )
-            sig_table.setStyle(TableStyle([
-                ('LINEBELOW', (1,0), (1,0), 1, colors.black),
-                ('LINEBELOW', (3,0), (3,0), 1, colors.black),
-                ('VALIGN', (0,0), (-1,-1), 'BOTTOM'),
-            ]))
-            story.append(sig_table)
-
-            story.append(Spacer(1, 0.15 * inch))
-            story.append(
-                Paragraph(
-                    "I acknowledge receipt of the items listed above in good condition.",
-                    ParagraphStyle(
-                        'Acknowledgment',
-                        parent=styles['Normal'],
-                        fontSize=9,
-                        textColor=colors.grey,
-                        alignment=1
-                    )
-                )
-            )
-
-            # Note for Delivery - bottom banner (after signatures)
-            if special_instructions:
-                story.append(Spacer(1, 0.3 * inch))
-                story.append(Paragraph("📋 NOTE FOR DELIVERY", heading_style))
-                story.append(Spacer(1, 0.1 * inch))
-                special_text = Paragraph(
-                    special_instructions.replace('\n', '<br/>'),
-                    ParagraphStyle(
-                        'DeliveryNote',
-                        parent=styles['Normal'],
-                        fontSize=11,
-                        leading=15,
-                        leftIndent=10,
-                        rightIndent=10,
-                        spaceAfter=10,
-                        textColor=colors.HexColor('#2c3e50'),
-                        backColor=colors.HexColor('#e8f4fd'),
-                        borderPadding=10,
-                        borderWidth=2,
-                        borderColor=colors.HexColor('#5bc0de')
-                    )
-                )
-                story.append(special_text)
-
-            # Build PDF
-            doc = SimpleDocTemplate(
-                file_path,
-                pagesize=letter,
-                leftMargin=0.5*inch,
-                rightMargin=0.5*inch,
-                topMargin=0.5*inch,
-                bottomMargin=0.5*inch
-            )
-            doc.build(story)
-
-            # Open PDF
-            try:
+                import os
                 os.startfile(file_path)
             except Exception:
                 pass
-            
+
             QMessageBox.information(
                 self,
                 "Delivery Ticket",
-                f"Delivery ticket saved:\n\n{file_path}"
+                f"Delivery ticket saved:\n\n{file_path}",
             )
-
+        except ImportError:
+            QMessageBox.critical(
+                self,
+                "Print Delivery Ticket",
+                "ReportLab is not available. Please install it:\n\npip install reportlab",
+            )
         except Exception as e:
             import traceback
             QMessageBox.critical(
                 self,
                 "Print Error",
-                f"Failed to print delivery ticket:\n\n{str(e)}\n\n{traceback.format_exc()}"
+                f"Failed to print delivery ticket:\n\n{str(e)}\n\n{traceback.format_exc()}",
             )
 
-    
+
     def _process_refill(self):
         """Process refill for current order - creates new refill order and opens ePACES dialog."""
         if not self.order:

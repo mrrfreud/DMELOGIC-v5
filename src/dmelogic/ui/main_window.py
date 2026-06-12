@@ -17,10 +17,10 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLineEdit, QComboBox, QLabel, QPushButton, QCheckBox,
     QFrame, QSizePolicy, QDialog, QMessageBox, QTableWidget, QToolBar, QApplication, QFileDialog, QScrollArea, QInputDialog,
-    QSlider, QWidgetAction
+    QSlider, QWidgetAction, QToolButton
 )
 from PyQt6.QtGui import QIcon, QAction, QShortcut, QKeySequence
-from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtCore import QSize, Qt, QObject, QEvent, QTimer
 from pathlib import Path
 
 # Legacy implementation from the monolithic app
@@ -48,7 +48,41 @@ from dmelogic.ui.notes_board import NotesBoardDialog
 from dmelogic.ui.components.sticky_notes_panel import StickyNotesPanel
 from dmelogic.ui.draggable_button_bar import DraggableButtonBar
 from dmelogic.ui.rx_import_wizard import RxImportWizard
-from dmelogic.ui.pending_approval_panel import PendingApprovalPanel
+
+
+# ── Shared modern button styling (light theme) ──────────────────────────────
+# One place defining the primary / ghost / danger button looks used across the
+# action bars. Original neutral palette + one blue accent; generic conventions
+# only (no third-party assets or color sets reproduced).
+_BTN_PRIMARY = (
+    "QPushButton { background:#2563eb; color:#ffffff; font-weight:600;"
+    " padding:7px 14px; border:none; border-radius:8px; }"
+    "QPushButton:hover { background:#1d4ed8; }"
+)
+_BTN_GHOST = (
+    "QPushButton { background:#ffffff; color:#0f172a; font-weight:600;"
+    " padding:7px 14px; border:1px solid #e2e8f0; border-radius:8px; }"
+    "QPushButton:hover { background:#f1f5f9; border-color:#cbd5e1; }"
+)
+_BTN_DANGER = (
+    "QPushButton { background:#ffffff; color:#dc2626; font-weight:600;"
+    " padding:7px 14px; border:1px solid #fecaca; border-radius:8px; }"
+    "QPushButton:hover { background:#fef2f2; border-color:#dc2626; }"
+)
+
+
+def _style_action_buttons(primary=(), ghost=(), danger=()):
+    """Apply the shared primary/ghost/danger button styles to the given buttons."""
+    from PyQt6.QtCore import Qt as _Qt
+    for group, css in ((primary, _BTN_PRIMARY), (ghost, _BTN_GHOST), (danger, _BTN_DANGER)):
+        for btn in group:
+            if btn is None:
+                continue
+            try:
+                btn.setStyleSheet(css)
+                btn.setCursor(_Qt.CursorShape.PointingHandCursor)
+            except Exception:
+                pass
 
 
 def build_orders_tab(self) -> QWidget:
@@ -58,17 +92,55 @@ def build_orders_tab(self) -> QWidget:
     second row toggled by an arrow button – this avoids two-row layout
     collapse issues across theme switches.
     """
+    # ── Modern light-theme styling (same original palette as the other tabs) ──
+    ACCENT     = "#2563eb"
+    PAGE_BG    = "#f3f5f9"
+    SURFACE    = "#ffffff"
+    BORDER     = "#e2e8f0"
+    TEXT       = "#0f172a"
+    TEXT_MUTED = "#64748b"
+
     tab = QWidget()
+    tab.setObjectName("ordTab")
+    tab.setStyleSheet(
+        f"#ordTab {{ background:{PAGE_BG}; }}"
+        f"#ordTab QTableWidget {{ background:{SURFACE}; border:1px solid {BORDER};"
+        f" border-radius:10px; gridline-color:{BORDER};"
+        f" selection-background-color:#e8f0fe; selection-color:{TEXT}; }}"
+        f"#ordTab QTableWidget::item {{ padding:6px 8px; }}"
+        f"#ordTab QHeaderView::section {{ background:#f8fafc; color:{TEXT_MUTED};"
+        f" font-weight:600; padding:8px; border:none;"
+        f" border-bottom:1px solid {BORDER}; }}"
+        f"#ordTab QLineEdit#ordSearch {{ background:{SURFACE}; color:{TEXT};"
+        f" border:1px solid {BORDER}; border-radius:18px; padding:8px 14px; }}"
+        f"#ordTab QLineEdit#ordSearch:focus {{ border-color:{ACCENT}; }}"
+        f"#ordTab QComboBox {{ background:{SURFACE}; color:{TEXT};"
+        f" border:1px solid {BORDER}; border-radius:8px; padding:6px 10px; }}"
+        f"#ordTab QComboBox:hover {{ border-color:#cbd5e1; }}"
+        f"#ordTab QCheckBox {{ color:{TEXT_MUTED}; }}"
+        f"#ordTab QFrame#OrdersSummaryFrame {{ background:{SURFACE};"
+        f" border:1px solid {BORDER}; border-radius:10px; }}"
+    )
     main_layout = QVBoxLayout(tab)
-    main_layout.setContentsMargins(8, 8, 8, 8)
-    main_layout.setSpacing(8)
+    main_layout.setContentsMargins(20, 18, 20, 18)
+    main_layout.setSpacing(12)
+
+    # --- Header ---
+    ord_header = QLabel("Orders & Tracking")
+    ord_header.setStyleSheet(f"font-size:22px; font-weight:700; color:{TEXT};")
+    ord_subtitle = QLabel("Track, refill, bill, and deliver patient orders.")
+    ord_subtitle.setStyleSheet(f"font-size:12px; color:{TEXT_MUTED};")
+    main_layout.addWidget(ord_header)
+    main_layout.addWidget(ord_subtitle)
 
     # --- Top filter bar ---
     top_bar = QHBoxLayout()
     top_bar.setSpacing(8)
 
     self.orders_search_edit = QLineEdit()
-    self.orders_search_edit.setPlaceholderText("Search orders (patient, order #, status)...")
+    self.orders_search_edit.setObjectName("ordSearch")
+    self.orders_search_edit.setPlaceholderText("🔍  Search orders (patient, order #, status)…")
+    self.orders_search_edit.setMinimumWidth(260)
 
     self.orders_status_combo = QComboBox()
     self.orders_status_combo.addItems(["All statuses", "Unbilled", "On Hold", "Open", "Pending", "Pending Approval", "Shipped", "Delivered", "Cancelled", "RX on File"])
@@ -76,13 +148,13 @@ def build_orders_tab(self) -> QWidget:
     self.orders_date_combo = QComboBox()
     self.orders_date_combo.addItems(["All dates", "This week", "This month", "This year"])
 
-    top_bar.addWidget(QLabel("Search:"))
+    _olbl = lambda t: (lambda l: (l.setStyleSheet(f"color:{TEXT_MUTED}; font-weight:600;"), l)[1])(QLabel(t))
     top_bar.addWidget(self.orders_search_edit, 2)
     top_bar.addSpacing(8)
-    top_bar.addWidget(QLabel("Status:"))
+    top_bar.addWidget(_olbl("Status:"))
     top_bar.addWidget(self.orders_status_combo, 1)
     top_bar.addSpacing(8)
-    top_bar.addWidget(QLabel("Date:"))
+    top_bar.addWidget(_olbl("Date:"))
     top_bar.addWidget(self.orders_date_combo, 1)
 
     self.orders_hide_zero_refills_checkbox = QCheckBox("Hide 0-refill orders")
@@ -101,19 +173,9 @@ def build_orders_tab(self) -> QWidget:
     top_bar.addStretch(1)
     main_layout.addLayout(top_bar)
 
-    # --- Pending Approval Panel (agent orders) ---
-    self.pending_approval_panel = PendingApprovalPanel(
-        folder_path=getattr(self, 'folder_path', None),
-        parent=tab,
-    )
-    # Wire approval/rejection to refresh the main orders table
-    self.pending_approval_panel.order_approved.connect(
-        lambda oid: self.load_orders() if hasattr(self, 'load_orders') else None
-    )
-    self.pending_approval_panel.order_rejected.connect(
-        lambda oid: self.load_orders() if hasattr(self, 'load_orders') else None
-    )
-    main_layout.addWidget(self.pending_approval_panel)
+    # NOTE: The legacy "Agent Orders — Pending Approval" panel was removed.
+    # Nova now creates orders directly as active "Pending" orders via
+    # create_order_db(), so the old OCR/file-drop approval queue is unused.
 
     # --- Orders table ---
     self.orders_table.setMinimumHeight(100)   # allow table to shrink so bottom bar fits
@@ -134,9 +196,9 @@ def build_orders_tab(self) -> QWidget:
 
     # Summary labels (left)
     self.orders_summary_label = QLabel("No order selected")
-    self.orders_summary_label.setProperty("typo", "section")
+    self.orders_summary_label.setStyleSheet("font-weight:600; color:#0f172a;")
     self.orders_sub_label = QLabel("Click any row to select an order and use the action buttons →")
-    self.orders_sub_label.setProperty("typo", "caption")
+    self.orders_sub_label.setStyleSheet("color:#64748b; font-size:9pt;")
 
     summary_layout = QVBoxLayout()
     summary_layout.setContentsMargins(0, 0, 0, 0)
@@ -146,12 +208,15 @@ def build_orders_tab(self) -> QWidget:
 
     top_section.addLayout(summary_layout, 3)
 
-    # --- Crisp action buttons (no emoji — pure text for sharp rendering) ---
+    # --- Light "ghost" action buttons (neutral surface, accent on hover) ------
+    # Replaces the former dark action bar + rainbow text. Each button stays
+    # neutral; its per-action accent now only tints the hover border, giving
+    # subtle scannability without a saturated rainbow of text colors.
     _ACTION_BTN_STYLE = """
         QPushButton {{
             font-size: {fsize}pt; font-weight: 600;
-            padding: 5px 12px; min-height: 26px;
-            border-radius: 5px;
+            padding: 6px 12px; min-height: 26px;
+            border-radius: 6px;
             border: 1px solid {border};
             background-color: {bg};
             color: {fg};
@@ -167,22 +232,27 @@ def build_orders_tab(self) -> QWidget:
     """
 
     def _make_action_btn(label: str, tooltip: str,
-                         fg: str = "#cbd5e1", bg: str = "#161d2c",
-                         border: str = "#253550",
-                         hover_bg: str = "#1e293b", hover_border: str = "#3b82f6",
-                         hover_fg: str = "#f1f5f9",
-                         press_bg: str = "#0f172a",
-                         accent: str | None = None) -> QPushButton:
+                         accent: str | None = None,
+                         kind: str = "ghost") -> QPushButton:
         btn = QPushButton(label)
         btn.setToolTip(tooltip)
-        if accent:
-            fg = accent
-            hover_fg = accent
-        btn.setStyleSheet(_ACTION_BTN_STYLE.format(
-            fsize=9, fg=fg, bg=bg, border=border,
-            hover_bg=hover_bg, hover_border=hover_border,
-            hover_fg=hover_fg, press_bg=press_bg,
-        ))
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        if kind == "primary":
+            css = _ACTION_BTN_STYLE.format(
+                fsize=9, fg="#ffffff", bg=ACCENT, border=ACCENT,
+                hover_bg="#1d4ed8", hover_border="#1d4ed8",
+                hover_fg="#ffffff", press_bg="#1e40af")
+        elif kind == "danger":
+            css = _ACTION_BTN_STYLE.format(
+                fsize=9, fg="#dc2626", bg=SURFACE, border="#fecaca",
+                hover_bg="#fef2f2", hover_border="#dc2626",
+                hover_fg="#dc2626", press_bg="#fee2e2")
+        else:  # ghost — neutral; accent only colors the hover border
+            css = _ACTION_BTN_STYLE.format(
+                fsize=9, fg=TEXT, bg=SURFACE, border=BORDER,
+                hover_bg="#f1f5f9", hover_border=accent or "#cbd5e1",
+                hover_fg=TEXT, press_bg="#e2e8f0")
+        btn.setStyleSheet(css)
         return btn
 
     # Primary row buttons — each with a distinct accent colour for scannability
@@ -200,17 +270,19 @@ def build_orders_tab(self) -> QWidget:
 
     created = {}
     for key, text, tip, accent in row1_defs:
-        btn = _make_action_btn(text, tip, accent=accent)
+        kind = "primary" if key == "edit_order" else "ghost"
+        btn = _make_action_btn(text, tip, accent=accent, kind=kind)
         created[key] = btn
         top_section.addWidget(btn)
 
     # Expand/collapse arrow button
     self._orders_more_btn = QPushButton("More ▼")
     self._orders_more_btn.setToolTip("Show / hide additional action buttons")
+    self._orders_more_btn.setCursor(Qt.CursorShape.PointingHandCursor)
     self._orders_more_btn.setStyleSheet(_ACTION_BTN_STYLE.format(
-        fsize=9, fg="#e2e8f0", bg="#1e293b", border="#334155",
-        hover_bg="#334155", hover_border="#3b82f6",
-        hover_fg="#f8fafc", press_bg="#0f172a",
+        fsize=9, fg=TEXT, bg="#f1f5f9", border=BORDER,
+        hover_bg="#e2e8f0", hover_border="#cbd5e1",
+        hover_fg=TEXT, press_bg="#e2e8f0",
     ))
     self._orders_more_btn.setFixedWidth(72)
     top_section.addWidget(self._orders_more_btn)
@@ -233,10 +305,12 @@ def build_orders_tab(self) -> QWidget:
         ("delete_order",         "Delete Order",         "Delete the selected order",                                     "#ef4444"),  # red
         ("link_patient",         "Link to Patient",      "Link order to a patient",                                       "#a3e635"),  # lime
         ("import_rx",            "Import Rx to Order",   "Upload Rx PDF(s) and auto-create an order",                     "#fb923c"),  # orange
+        ("batch_print_tickets",  "Batch Print Tickets",  "Print one combined delivery-ticket PDF for all checked orders", "#38bdf8"),  # sky
     ]
 
     for key, text, tip, accent in row2_defs:
-        btn = _make_action_btn(text, tip, accent=accent)
+        kind = "danger" if key == "delete_order" else "ghost"
+        btn = _make_action_btn(text, tip, accent=accent, kind=kind)
         created[key] = btn
         row2_layout.addWidget(btn)
 
@@ -273,6 +347,7 @@ def build_orders_tab(self) -> QWidget:
     self.btn_delete_order = created.get("delete_order")
     self.btn_link_patient = created.get("link_patient")
     self.btn_import_rx = created.get("import_rx")
+    self.btn_batch_print_tickets = created.get("batch_print_tickets")
 
     try:
         self.btn_edit_order.setProperty("primary", True)
@@ -283,9 +358,6 @@ def build_orders_tab(self) -> QWidget:
 
     # Wire filter signals
     self.orders_search_edit.textChanged.connect(self.apply_table_filters)
-    self.orders_search_edit.textChanged.connect(
-        lambda text: self.pending_approval_panel.filter_by_text(text)
-    )
     self.orders_status_combo.currentIndexChanged.connect(self.apply_table_filters)
     self.orders_date_combo.currentIndexChanged.connect(self.apply_table_filters)
     self.orders_hide_zero_refills_checkbox.toggled.connect(self.apply_table_filters)
@@ -299,17 +371,56 @@ def build_patients_tab(self) -> QWidget:
     Build the Patients tab UI: top filter bar, patients table, bottom summary/action panel.
     Assumes self.patients_table already exists and is configured.
     """
+    # ── Modern light-theme styling (same original palette as Inventory) ──────
+    # Generic design conventions only (light page, white card table, pill
+    # search, muted labels). No third-party assets or color sets reproduced.
+    ACCENT     = "#2563eb"
+    PAGE_BG    = "#f3f5f9"
+    SURFACE    = "#ffffff"
+    BORDER     = "#e2e8f0"
+    TEXT       = "#0f172a"
+    TEXT_MUTED = "#64748b"
+
     tab = QWidget()
+    tab.setObjectName("patTab")
+    tab.setStyleSheet(
+        f"#patTab {{ background:{PAGE_BG}; }}"
+        f"#patTab QTableWidget {{ background:{SURFACE}; border:1px solid {BORDER};"
+        f" border-radius:10px; gridline-color:{BORDER};"
+        f" selection-background-color:#e8f0fe; selection-color:{TEXT}; }}"
+        f"#patTab QTableWidget::item {{ padding:6px 8px; }}"
+        f"#patTab QHeaderView::section {{ background:#f8fafc; color:{TEXT_MUTED};"
+        f" font-weight:600; padding:8px; border:none;"
+        f" border-bottom:1px solid {BORDER}; }}"
+        f"#patTab QLineEdit#patSearch {{ background:{SURFACE}; color:{TEXT};"
+        f" border:1px solid {BORDER}; border-radius:18px; padding:8px 14px; }}"
+        f"#patTab QLineEdit#patSearch:focus {{ border-color:{ACCENT}; }}"
+        f"#patTab QComboBox {{ background:{SURFACE}; color:{TEXT};"
+        f" border:1px solid {BORDER}; border-radius:8px; padding:6px 10px; }}"
+        f"#patTab QComboBox:hover {{ border-color:#cbd5e1; }}"
+        f"#patTab QFrame#PatientsSummaryFrame {{ background:{SURFACE};"
+        f" border:1px solid {BORDER}; border-radius:10px; }}"
+    )
     main_layout = QVBoxLayout(tab)
-    main_layout.setContentsMargins(8, 8, 8, 8)
-    main_layout.setSpacing(8)
+    main_layout.setContentsMargins(20, 18, 20, 18)
+    main_layout.setSpacing(12)
+
+    # --- Header ---
+    pat_header = QLabel("Patients")
+    pat_header.setStyleSheet(f"font-size:22px; font-weight:700; color:{TEXT};")
+    pat_subtitle = QLabel("Search, review, and manage patient records.")
+    pat_subtitle.setStyleSheet(f"font-size:12px; color:{TEXT_MUTED};")
+    main_layout.addWidget(pat_header)
+    main_layout.addWidget(pat_subtitle)
 
     # --- Top filter bar ---
     top_bar = QHBoxLayout()
     top_bar.setSpacing(8)
 
     self.patients_search_edit = QLineEdit()
-    self.patients_search_edit.setPlaceholderText("Search patients (name, DOB, MRN)...")
+    self.patients_search_edit.setObjectName("patSearch")
+    self.patients_search_edit.setPlaceholderText("🔍  Search patients (name, DOB, MRN)…")
+    self.patients_search_edit.setMinimumWidth(260)
 
     self.patients_status_combo = QComboBox()
     self.patients_status_combo.addItems(["All", "Active", "Inactive"])
@@ -317,13 +428,13 @@ def build_patients_tab(self) -> QWidget:
     self.patients_insurance_combo = QComboBox()
     self.patients_insurance_combo.addItem("All insurances")
 
-    top_bar.addWidget(QLabel("Search:"))
+    _lbl = lambda t: (lambda l: (l.setStyleSheet(f"color:{TEXT_MUTED}; font-weight:600;"), l)[1])(QLabel(t))
     top_bar.addWidget(self.patients_search_edit, 2)
     top_bar.addSpacing(8)
-    top_bar.addWidget(QLabel("Status:"))
+    top_bar.addWidget(_lbl("Status:"))
     top_bar.addWidget(self.patients_status_combo, 1)
     top_bar.addSpacing(8)
-    top_bar.addWidget(QLabel("Insurance:"))
+    top_bar.addWidget(_lbl("Insurance:"))
     top_bar.addWidget(self.patients_insurance_combo, 1)
 
     top_bar.addStretch(1)
@@ -426,7 +537,16 @@ def build_patients_tab(self) -> QWidget:
     self.btn_delete_patient = self.patient_button_bar.add_button(
         "delete_patient", "🗑️ Delete Patient", "Delete selected patient"
     )
-    
+
+    # Apply the modern button styling (primary / ghost / danger) so the action
+    # bar matches the rest of the tab instead of the old all-blue look.
+    _style_action_buttons(
+        primary=[self.btn_new_patient],
+        danger=[self.btn_delete_patient],
+        ghost=[self.btn_patients_view_orders, self.btn_patients_view_docs,
+               self.btn_patients_new_order, self.btn_edit_patient],
+    )
+
     # Restore saved button order if available
     saved_patient_order = self.settings.get('patient_button_order', [])
     if saved_patient_order:
@@ -530,6 +650,50 @@ def _set_taskbar_appid(window, appid: str) -> bool:
         return False
 
 
+class _MenuBarClickFixer(QObject):
+    """Make every top-level menu open reliably on click.
+
+    On some Windows theme/style combinations the native QMenuBar fails to keep
+    certain menus open on click (the popup opens via aboutToShow then is
+    dismissed immediately). This filter lets Qt try natively first, then — on
+    the next event-loop tick — force-opens the clicked menu if nothing actually
+    opened. It never consumes the event, so working menus are unaffected.
+    """
+
+    def __init__(self, menubar):
+        super().__init__(menubar)
+        self._mb = menubar
+
+    def eventFilter(self, obj, event):
+        try:
+            if (event.type() == QEvent.Type.MouseButtonPress
+                    and event.button() == Qt.MouseButton.LeftButton):
+                pos = event.position().toPoint()
+                act = self._mb.actionAt(pos)
+                if act is not None and act.menu() is not None:
+                    menu = act.menu()
+                    mb = self._mb
+
+                    def _ensure_open():
+                        try:
+                            any_open = any(
+                                a.menu() and a.menu().isVisible()
+                                for a in mb.actions()
+                            )
+                            if not any_open:
+                                mb.setActiveAction(act)
+                                gpos = mb.mapToGlobal(
+                                    mb.actionGeometry(act).bottomLeft())
+                                menu.popup(gpos)
+                        except Exception:
+                            pass
+
+                    QTimer.singleShot(0, _ensure_open)
+        except Exception:
+            pass
+        return False  # never consume — supplement native handling only
+
+
 class MainWindow(PDFViewer):
     """Primary window for the application.
 
@@ -547,17 +711,41 @@ class MainWindow(PDFViewer):
         # TODO: future: inject services, db repos, etc. here
         # e.g. self.orders_repo = OrdersRepository(...)
         # Right now we keep it minimal to avoid behavior changes.
+        self._ui_scale_slider = None
+        self._ui_scale_value_label = None
+
+        try:
+            # Keep menu behavior under Qt control on Windows where native menu
+            # interactions can be inconsistent on some theme/style combinations.
+            self.menuBar().setNativeMenuBar(False)
+        except Exception:
+            pass
+
+        # IMPORTANT: build/extend all menus BEFORE the window is shown. On
+        # Windows, menu-bar items that are added or modified AFTER the window is
+        # realized can fail to open on click. Showing the window last keeps every
+        # top-line menu (incl. Nova/Tools/View) reliably clickable.
+        self._setup_theme_menu()
+        self._setup_tools_menu()
+        self._setup_help_menu()
+        self._ensure_nova_menu()
+        self._dedupe_top_menus({"view", "tools", "communications", "nova"})
+
+        try:
+            mb = self.menuBar()
+            mb.adjustSize()
+            mb.update()
+            # Guarantee every top-level menu opens on click (native handling is
+            # unreliable for some menus on certain Windows themes).
+            self._menubar_click_fixer = _MenuBarClickFixer(mb)
+            mb.installEventFilter(self._menubar_click_fixer)
+        except Exception:
+            pass
+
         try:
             self.showMaximized()  # Start maximized to avoid layout squeeze
         except Exception:
             pass
-        self._ui_scale_slider = None
-        self._ui_scale_value_label = None
-        
-        # Setup theme switching menu
-        self._setup_theme_menu()
-        self._setup_tools_menu()
-        self._setup_help_menu()
 
         # --- Multi-window: Ctrl+2 opens a second full window ---
         try:
@@ -629,6 +817,68 @@ class MainWindow(PDFViewer):
                 return menu
 
         return menubar.addMenu(fallback_title)
+
+    @staticmethod
+    def _normalize_menu_title(title: str) -> str:
+        return (title or "").replace("&&", "&").replace("&", "").strip().lower()
+
+    def _find_menu(self, candidates: Iterable[str]):
+        wanted = {self._normalize_menu_title(t) for t in candidates}
+        for act in self.menuBar().actions():
+            menu = act.menu()
+            if not menu:
+                continue
+            if self._normalize_menu_title(menu.title()) in wanted:
+                return menu
+        return None
+
+    def _dedupe_top_menus(self, titles: set[str]) -> None:
+        """Keep only the first top-level menu for each requested title."""
+        try:
+            menubar = self.menuBar()
+            seen: set[str] = set()
+            for act in list(menubar.actions()):
+                menu = act.menu()
+                if not menu:
+                    continue
+                key = self._normalize_menu_title(menu.title())
+                if key not in titles:
+                    continue
+                if key in seen:
+                    menubar.removeAction(act)
+                    continue
+                seen.add(key)
+        except Exception:
+            pass
+
+    def _ensure_nova_menu(self) -> None:
+        """Guarantee there is a Nova menu even if legacy creation path failed."""
+        if self._find_menu(("Nova",)) is not None:
+            return
+        try:
+            from dmelogic.features import nova_enabled as _nova_enabled
+            nova_menu = self.menuBar().addMenu("Nova")
+
+            launch_action = QAction("Launch Nova...", self)
+            if hasattr(self, "launch_nova"):
+                launch_action.triggered.connect(self.launch_nova)
+            else:
+                launch_action.setEnabled(False)
+            nova_menu.addAction(launch_action)
+
+            enable_action = QAction("Enable Nova on startup", self)
+            enable_action.setCheckable(True)
+            try:
+                enable_action.setChecked(bool(_nova_enabled()))
+            except Exception:
+                enable_action.setChecked(False)
+            if hasattr(self, "set_nova_enabled"):
+                enable_action.toggled.connect(self.set_nova_enabled)
+            else:
+                enable_action.setEnabled(False)
+            nova_menu.addAction(enable_action)
+        except Exception:
+            pass
 
     @staticmethod
     def _menu_has_action(menu, text: str) -> bool:
@@ -862,11 +1112,14 @@ class MainWindow(PDFViewer):
         """Add View menu with theme switching options."""
         from PyQt6.QtWidgets import QApplication
         
-        menubar = self.menuBar()
-        
-        # Create View menu
-        view_menu = menubar.addMenu("&View")
-        
+        # Reuse the existing View menu (created by the legacy menu bar) instead
+        # of adding a second one — appending theme/scale actions to it.
+        view_menu = self._find_menu(("View",))
+        if view_menu is None:
+            view_menu = self.menuBar().addMenu("&View")
+        else:
+            view_menu.addSeparator()
+
         # Light theme action
         self.action_light_theme = QAction("Light Theme", self)
         self.action_light_theme.setCheckable(True)
@@ -974,16 +1227,10 @@ class MainWindow(PDFViewer):
     def _setup_tools_menu(self) -> None:
         """Add Tools menu and toolbar entry for sticky notes and user administration."""
         from dmelogic.security.permissions import has_permission
-        
-        menubar = self.menuBar()
-        tools_menu = None
-        for act in menubar.actions():
-            menu = act.menu()
-            if menu and menu.title().replace("&&", "&") in ("&Tools", "Tools"):
-                tools_menu = menu
-                break
+
+        tools_menu = self._find_menu(("Tools",))
         if tools_menu is None:
-            tools_menu = menubar.addMenu("&Tools")
+            tools_menu = self.menuBar().addMenu("&Tools")
 
         self.action_sticky_notes = QAction("Sticky Notes", self)
         self.action_sticky_notes.setToolTip("Open global sticky notes")
@@ -1017,6 +1264,65 @@ class MainWindow(PDFViewer):
         self.action_change_password.setToolTip("Change your password")
         self.action_change_password.triggered.connect(self._open_change_password)
         tools_menu.addAction(self.action_change_password)
+
+    def _setup_quick_menu_fallback(self) -> None:
+        """Provide guaranteed-click controls for Nova/Communications/Tools.
+
+        On some Windows style/theme combinations, the native menu bar can appear
+        clickable but fail to open reliably. This toolbar gives users a stable
+        path to the same menus.
+        """
+        try:
+            # Prefer augmenting the existing legacy Nova toolbar (single launch button).
+            bar = self.findChild(QToolBar, "NovaToolBar")
+            if bar is not None:
+                if bool(bar.property("quick_access_augmented")):
+                    return
+                bar.addSeparator()
+                bar.setProperty("quick_access_augmented", True)
+            else:
+                # Avoid duplicate fallback bars if MainWindow gets reconfigured.
+                existing = self.findChild(QToolBar, "QuickAccessToolBar")
+                if existing is not None:
+                    return
+
+                bar = QToolBar("Quick Access", self)
+                bar.setObjectName("QuickAccessToolBar")
+                bar.setMovable(False)
+
+                # Push controls to the right so it behaves like a top-right utility strip.
+                spacer = QWidget(bar)
+                spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+                bar.addWidget(spacer)
+
+                launch_btn = QPushButton("Launch Nova")
+                launch_btn.setToolTip("Start Nova (if needed) and open the assistant")
+                launch_btn.setStyleSheet(
+                    "QPushButton{background:#7c3aed;color:white;border-radius:4px;"
+                    "padding:4px 12px;font-weight:bold;}"
+                    "QPushButton:hover{background:#6d28d9;}"
+                )
+                if hasattr(self, "launch_nova"):
+                    launch_btn.clicked.connect(self.launch_nova)
+                else:
+                    launch_btn.setEnabled(False)
+                bar.addWidget(launch_btn)
+
+            for title in ("Communications", "Tools"):
+                menu = self._find_menu((title,))
+                if menu is None:
+                    continue
+                btn = QToolButton(bar)
+                btn.setText(title)
+                btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+                btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+                btn.setMenu(menu)
+                bar.addWidget(btn)
+
+            if bar.objectName() == "QuickAccessToolBar":
+                self.addToolBar(Qt.ToolBarArea.TopToolBarArea, bar)
+        except Exception:
+            pass
     
     def _open_user_admin(self) -> None:
         """Open the User Administration dialog."""

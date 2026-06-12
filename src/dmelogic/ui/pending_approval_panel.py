@@ -189,21 +189,21 @@ class PendingApprovalPanel(QWidget):
     order_approved = pyqtSignal(int)
     order_rejected = pyqtSignal(int)
 
-    # Visual constants
-    _BANNER_BG = "#1e1b4b"          # Deep indigo
-    _BANNER_BORDER = "#4338ca"      # Indigo-600
-    _BANNER_TEXT = "#e0e7ff"        # Indigo-100
-    _BADGE_BG = "#f59e0b"          # Amber-500
-    _BADGE_FG = "#1e1b4b"          # Deep indigo
-    _APPROVE_BG = "#16a34a"        # Green-600
+    # Visual constants — light theme, consistent with the main tabs.
+    _BANNER_BG = "#eef2ff"          # Soft indigo tint card
+    _BANNER_BORDER = "#c7d2fe"      # Indigo-200
+    _BANNER_TEXT = "#3730a3"        # Indigo-800 (readable on light)
+    _BADGE_BG = "#f59e0b"          # Amber-500 (count badge)
+    _BADGE_FG = "#ffffff"          # White on amber
+    _APPROVE_BG = "#16a34a"        # Green-600 (semantic action)
     _APPROVE_HOVER = "#15803d"     # Green-700
-    _REJECT_BG = "#dc2626"         # Red-600
+    _REJECT_BG = "#dc2626"         # Red-600 (semantic action)
     _REJECT_HOVER = "#b91c1c"      # Red-700
-    _TABLE_BG = "#1a1742"          # Darker indigo
-    _TABLE_ALT = "#231f56"         # Slightly lighter
-    _TABLE_FG = "#ffffff"          # White text for legibility
-    _TABLE_HEADER_BG = "#312e81"   # Indigo-800
-    _TABLE_HEADER_FG = "#ffffff"   # White header text
+    _TABLE_BG = "#ffffff"          # White table surface
+    _TABLE_ALT = "#f8fafc"         # Subtle zebra tint
+    _TABLE_FG = "#0f172a"          # Dark slate text
+    _TABLE_HEADER_BG = "#f8fafc"   # Light header
+    _TABLE_HEADER_FG = "#64748b"   # Muted header text
 
     # Auto-refresh interval (ms)
     _POLL_INTERVAL_MS = 5_000     # 5 seconds for responsive agent order processing
@@ -424,17 +424,17 @@ class PendingApprovalPanel(QWidget):
                 background-color: {self._TABLE_BG};
                 alternate-background-color: {self._TABLE_ALT};
                 color: {self._TABLE_FG};
-                gridline-color: #2e2b5e;
+                gridline-color: #e2e8f0;
                 border: none;
                 font-size: 9pt;
             }}
             QTableWidget#PendingApprovalTable QHeaderView::section {{
                 background-color: {self._TABLE_HEADER_BG};
                 color: {self._TABLE_HEADER_FG};
-                font-weight: 700; font-size: 9pt;
+                font-weight: 600; font-size: 9pt;
                 padding: 4px 8px;
                 border: none;
-                border-bottom: 2px solid {self._BANNER_BORDER};
+                border-bottom: 1px solid {self._BANNER_BORDER};
             }}
             QTableWidget#PendingApprovalTable::item {{
                 padding: 4px 8px;
@@ -443,11 +443,11 @@ class PendingApprovalPanel(QWidget):
             }}
             QTableWidget#PendingApprovalTable::item:hover {{
                 color: {self._TABLE_FG};
-                background-color: rgba(255,255,255,0.05);
+                background-color: rgba(37,99,235,0.05);
             }}
             QTableWidget#PendingApprovalTable::item:selected {{
-                background-color: #3730a3;
-                color: #ffffff;
+                background-color: #e8f0fe;
+                color: {self._TABLE_FG};
             }}
         """)
 
@@ -710,26 +710,28 @@ class PendingApprovalPanel(QWidget):
 
             if not gaps:
                 completeness_text = "\u2705 Complete"
-                completeness_color = QColor("#4ade80")   # green-400 (bright)
+                completeness_color = QColor("#16a34a")   # green-600 (on white)
             elif len(gaps) <= 2:
                 completeness_text = f"\u26A0 {', '.join(gaps)}"
-                completeness_color = QColor("#fcd34d")   # amber-300 (bright)
+                completeness_color = QColor("#b45309")   # amber-700 (on white)
             else:
                 completeness_text = f"\u274C {len(gaps)}/{7} missing"
-                completeness_color = QColor("#fca5a5")   # red-300 (bright on dark)
+                completeness_color = QColor("#dc2626")   # red-600 (on white)
 
-            # Set cell values
-            _WARN_COLOR = QColor("#fcd34d")   # amber-300 (bright on dark)
+            # Set cell values \u2014 dark slate text, amber for incomplete fields.
+            _TEXT_COLOR = QColor("#0f172a")
+            _MUTED_COLOR = QColor("#475569")
+            _WARN_COLOR = QColor("#b45309")   # amber-700 (readable on white)
 
             cells = [
-                (formatted_id, QColor("#ffffff")),
-                (patient_name, _WARN_COLOR if patient_incomplete else QColor("#ffffff")),
-                (dob, _WARN_COLOR if not dob else QColor("#e2e8f0")),
-                (item_count, QColor("#ffffff")),
-                (hcpcs_summary, _WARN_COLOR if has_placeholder_items else QColor("#e2e8f0")),
-                (rx_date if not rx_date_missing else "[Missing]", _WARN_COLOR if rx_date_missing else QColor("#e2e8f0")),
+                (formatted_id, _TEXT_COLOR),
+                (patient_name, _WARN_COLOR if patient_incomplete else _TEXT_COLOR),
+                (dob, _WARN_COLOR if not dob else _MUTED_COLOR),
+                (item_count, _TEXT_COLOR),
+                (hcpcs_summary, _WARN_COLOR if has_placeholder_items else _MUTED_COLOR),
+                (rx_date if not rx_date_missing else "[Missing]", _WARN_COLOR if rx_date_missing else _MUTED_COLOR),
                 (completeness_text, completeness_color),
-                (created, QColor("#e2e8f0")),
+                (created, _MUTED_COLOR),
             ]
             for col_idx, (text, color) in enumerate(cells):
                 item = QTableWidgetItem(str(text))
@@ -794,9 +796,10 @@ class PendingApprovalPanel(QWidget):
             review_btn.setToolTip(f"Open order {formatted_id} for detailed review")
             review_btn.setStyleSheet(f"""
                 QPushButton {{ {_BTN_STYLE}
-                    background-color: #4338ca; color: #e0e7ff;
+                    background-color: #ffffff; color: #0f172a;
+                    border: 1px solid #e2e8f0;
                 }}
-                QPushButton:hover {{ background-color: #3730a3; }}
+                QPushButton:hover {{ background-color: #f1f5f9; border-color: #cbd5e1; }}
             """)
             review_btn.clicked.connect(lambda checked, oid=order_id: self._on_review(oid))
             actions_layout.addWidget(review_btn)
@@ -806,16 +809,16 @@ class PendingApprovalPanel(QWidget):
             view_rx_cb.setToolTip(f"View source prescription for {formatted_id}")
             view_rx_cb.setStyleSheet("""
                 QCheckBox {
-                    font-size: 8pt; color: #c7d2fe;
+                    font-size: 8pt; color: #475569;
                     spacing: 4px;
                 }
                 QCheckBox::indicator {
                     width: 14px; height: 14px;
-                    border: 1px solid #6366f1; border-radius: 2px;
-                    background: transparent;
+                    border: 1px solid #cbd5e1; border-radius: 3px;
+                    background: #ffffff;
                 }
                 QCheckBox::indicator:checked {
-                    background-color: #4338ca;
+                    background-color: #2563eb;
                 }
             """)
             view_rx_cb.stateChanged.connect(

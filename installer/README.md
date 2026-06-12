@@ -15,6 +15,13 @@ with Inno Setup.
 From the repository root:
 
 ```powershell
+python -m pytest -q
+python tools/reliability_check.py
+```
+
+Then build the application bundle:
+
+```powershell
 pyinstaller installer\DMELogic.spec
 ```
 

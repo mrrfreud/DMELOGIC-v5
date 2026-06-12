@@ -58,6 +58,7 @@ class Startup:
 
     # ── Steps (in order) ───────────────────────────────────────────────
     def run(self) -> int:
+        self._load_environment()
         self._setup_logging_and_config()
         self._install_crash_reporter()
 
@@ -96,6 +97,44 @@ class Startup:
         return app.exec()
 
     # ── Step implementations ───────────────────────────────────────────
+    def _load_environment(self) -> None:
+        """Load secrets/config from a .env in the data root into os.environ.
+
+        Nova (nova_agent, nova_ui_server, dmelogic_api) and the RingCentral
+        service read their credentials from environment variables. Because Nova
+        runs as spawned subprocesses that inherit this process's environment,
+        loading the data-root ``.env`` here makes those keys available to the
+        whole app regardless of the working directory.
+
+        Dependency-free: does not require python-dotenv. Existing environment
+        variables always win (never overridden), so machine/CI env stays
+        authoritative.
+        """
+        import os
+        try:
+            from dmelogic.config import data_root
+            env_path = data_root() / ".env"
+        except Exception:
+            return
+        if not env_path.is_file():
+            return
+        try:
+            for raw in env_path.read_text(encoding="utf-8-sig").splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                if key.lower().startswith("export "):
+                    key = key[len("export "):].strip()
+                if not key or key in os.environ:
+                    continue
+                value = value.strip().strip('"').strip("'")
+                os.environ[key] = value
+        except Exception:
+            # Never let env loading block startup.
+            pass
+
     def _setup_logging_and_config(self) -> None:
         from dmelogic.paths import get_logs_dir
         logs_dir = get_logs_dir()

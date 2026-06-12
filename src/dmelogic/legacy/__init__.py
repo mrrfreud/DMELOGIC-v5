@@ -10,16 +10,14 @@ This package exists to *fence off* that code, not to bless it. The #1 item on
 the modernization roadmap (see docs/ARCHITECTURE.md) is decomposing
 ``PDFViewer`` into proper ``dmelogic.ui`` components and retiring this package.
 
-Only the names re-exported below are part of the supported surface; everything
+Only the names in ``__all__`` are part of the supported surface; everything
 else in ``legacy_app.py`` is dead and slated for removal.
 """
 
-from dmelogic.legacy.legacy_app import (  # noqa: F401
-    PDFViewer,
-    PrescriberDialog,
-    InventoryItemDialog,
-    ICD10SearchDialog,
-)
+from __future__ import annotations
+
+from importlib import import_module
+from typing import Any
 
 __all__ = [
     "PDFViewer",
@@ -27,3 +25,10 @@ __all__ = [
     "InventoryItemDialog",
     "ICD10SearchDialog",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name in __all__:
+        module = import_module("dmelogic.legacy.legacy_app")
+        return getattr(module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

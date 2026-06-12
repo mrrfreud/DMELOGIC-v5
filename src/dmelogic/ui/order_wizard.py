@@ -979,10 +979,9 @@ class OrderWizard(QDialog):
     def _on_add_prescriber(self) -> None:
         """Open the Add Prescriber dialog from parent window."""
         try:
-            # Import the dialog class
-            from dmelogic.legacy import PrescriberDialog
-            
-            dialog = PrescriberDialog(self)
+            from dmelogic.ui import create_prescriber_dialog
+
+            dialog = create_prescriber_dialog(self)
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 # Get the prescriber data that was just added
                 data = dialog.get_prescriber_data()
@@ -1127,9 +1126,9 @@ class OrderWizard(QDialog):
     def _on_add_prescriber_2(self) -> None:
         """Open the Add Prescriber dialog for second prescriber."""
         try:
-            from dmelogic.legacy import PrescriberDialog
+            from dmelogic.ui import create_prescriber_dialog
 
-            dialog = PrescriberDialog(self)
+            dialog = create_prescriber_dialog(self)
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 data = dialog.get_prescriber_data()
 

@@ -76,7 +76,28 @@ class PrescriberLookupDialog(QDialog):
         self.last_name_input.setPlaceholderText("Enter last name (optional)")
         last_layout.addWidget(self.last_name_input)
         name_layout.addLayout(last_layout)
-        
+
+        # Narrowing filters — help disambiguate prescribers with the same or
+        # similar names. State also makes the NPI Registry query far more
+        # precise (the API filters reliably on state).
+        narrow_layout = QHBoxLayout()
+        narrow_layout.addWidget(QLabel("State:"))
+        self.state_filter = QComboBox()
+        self.state_filter.addItem("Any State", "")
+        for _abbr in [
+            "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN",
+            "IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV",
+            "NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","PR","RI","SC","SD",
+            "TN","TX","UT","VT","VA","WA","WV","WI","WY","DC",
+        ]:
+            self.state_filter.addItem(_abbr, _abbr)
+        narrow_layout.addWidget(self.state_filter)
+        narrow_layout.addWidget(QLabel("Specialty:"))
+        self.specialty_filter = QLineEdit()
+        self.specialty_filter.setPlaceholderText("e.g. Pediatrics (optional)")
+        narrow_layout.addWidget(self.specialty_filter)
+        name_layout.addLayout(narrow_layout)
+
         search_group.addWidget(self.name_widget)
         
         # NPI search field
@@ -101,14 +122,15 @@ class PrescriberLookupDialog(QDialog):
         self.search_btn = QPushButton("Search")
         self.search_btn.setStyleSheet("""
             QPushButton {
-                background-color: #27ae60;
+                background-color: #2563eb;
                 color: white;
                 padding: 8px 20px;
-                font-weight: bold;
-                border-radius: 4px;
+                font-weight: 600;
+                border: none;
+                border-radius: 8px;
             }
             QPushButton:hover {
-                background-color: #229954;
+                background-color: #1d4ed8;
             }
         """)
         self.search_btn.clicked.connect(self.perform_search)
@@ -207,7 +229,9 @@ class PrescriberLookupDialog(QDialog):
                     )
                     return
                 
-                self.search_registry_by_name(first_name, last_name)
+                state = self.state_filter.currentData() or ""
+                specialty = self.specialty_filter.text().strip()
+                self.search_registry_by_name(first_name, last_name, state, specialty)
             else:
                 npi = self.npi_input.text().strip()
                 
@@ -369,16 +393,17 @@ class PrescriberLookupDialog(QDialog):
             self.results_table.setItem(row_num, 4, QTableWidgetItem(city))
             self.results_table.setItem(row_num, 5, QTableWidgetItem(state))
     
-    def search_registry_by_name(self, first_name, last_name):
-        """Search NPI Registry by prescriber name."""
+    def search_registry_by_name(self, first_name, last_name, state="", specialty=""):
+        """Search NPI Registry by prescriber name, optionally narrowed by state/specialty."""
         self.status_label.setText("Searching NPI Registry...")
         self.search_btn.setEnabled(False)
-        
+
         try:
             service = get_npi_service()
             results, error = service.lookup_by_name(
                 first_name=first_name or None,
                 last_name=last_name or None,
+                state=state or None,
                 limit=50,
             )
             if error:
@@ -386,13 +411,20 @@ class PrescriberLookupDialog(QDialog):
                 self.status_label.setText("Search failed.")
                 self.results_table.setRowCount(0)
                 return
-            
+
+            # Optional client-side specialty narrowing (substring, case-insensitive).
+            if specialty:
+                spec_u = specialty.upper()
+                results = [r for r in results
+                           if spec_u in (r.get("specialty") or "").upper()]
+
             if not results:
-                self.status_label.setText("No prescribers found in NPI Registry.")
+                self.status_label.setText("No prescribers found matching your criteria.")
                 self.results_table.setRowCount(0)
             else:
                 self.populate_registry_results(results)
-                self.status_label.setText(f"Found {len(results)} prescriber(s) in NPI Registry. Double-click to select.")
+                scope = f" in {state}" if state else ""
+                self.status_label.setText(f"Found {len(results)} prescriber(s){scope}. Double-click to select.")
                 
         except Exception as e:
             QMessageBox.critical(

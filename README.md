@@ -60,6 +60,18 @@ pip install -e .[nova,dev]
 python -m dmelogic.app          # or:  dmelogic
 ```
 
+## Reliability Upgrade checks
+
+Run these before releases (and in CI):
+
+```powershell
+python -m pytest -q
+python tools/reliability_check.py
+```
+
+`tools/reliability_check.py` verifies critical hardening guarantees (startup
+fail-fast hooks, lazy UI seams, and expected reliability regression tests).
+
 ## Editions
 
 | Edition | Build |

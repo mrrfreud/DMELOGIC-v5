@@ -32,6 +32,19 @@ logger = logging.getLogger("triage.ui")
 _INBOX_KEY = "__inbox__"
 _ALL_KEY = "__all__"
 
+# Shared modern button styles (light theme) — same original palette as the
+# main tabs: one blue accent + neutral slate/white surfaces.
+_BTN_PRIMARY = (
+    "QPushButton { background:#2563eb; color:#ffffff; font-weight:600;"
+    " padding:7px 14px; border:none; border-radius:8px; }"
+    "QPushButton:hover { background:#1d4ed8; }"
+)
+_BTN_GHOST = (
+    "QPushButton { background:#ffffff; color:#0f172a; font-weight:600;"
+    " padding:7px 14px; border:1px solid #e2e8f0; border-radius:8px; }"
+    "QPushButton:hover { background:#f1f5f9; border-color:#cbd5e1; }"
+)
+
 
 class _DropLocationsList(QListWidget):
     """Locations list that accepts a document dragged from the queue.
@@ -115,6 +128,8 @@ class TriageWidget(QWidget):
         header.addWidget(self.search_edit)
         header.addStretch()
         manage_btn = QPushButton("⚙ Manage Buckets")
+        manage_btn.setStyleSheet(_BTN_GHOST)
+        manage_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         manage_btn.clicked.connect(self._manage_buckets)
         header.addWidget(manage_btn)
         root.addLayout(header)
@@ -183,8 +198,12 @@ class TriageWidget(QWidget):
         # Action buttons
         actions = QHBoxLayout()
         self.rename_btn = QPushButton("✎ Rename")
+        self.rename_btn.setStyleSheet(_BTN_GHOST)
+        self.rename_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.rename_btn.clicked.connect(self._rename)
         self.link_btn = QPushButton("🔗 Link patient")
+        self.link_btn.setStyleSheet(_BTN_PRIMARY)
+        self.link_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.link_btn.clicked.connect(self._link_patient)
         actions.addWidget(self.rename_btn)
         actions.addWidget(self.link_btn)
@@ -205,6 +224,8 @@ class TriageWidget(QWidget):
         self.note_edit.setFixedHeight(60)
         layout.addWidget(self.note_edit)
         add_note_btn = QPushButton("Add note")
+        add_note_btn.setStyleSheet(_BTN_GHOST)
+        add_note_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         add_note_btn.clicked.connect(self._add_note)
         layout.addWidget(add_note_btn)
 
@@ -291,9 +312,11 @@ class TriageWidget(QWidget):
             item.setForeground(Qt.GlobalColor.darkGray)
             self.locations.addItem(item)
 
-        # Restore selection
-        self.locations.blockSignals(False)
+        # Restore selection with signals still blocked — otherwise re-applying
+        # the highlight re-fires _on_location_changed, which rebuilds the doc
+        # list with keep_selection=False and snaps back to the first document.
         self._select_location(prev)
+        self.locations.blockSignals(False)
 
     def _select_location(self, key) -> None:
         for i in range(self.locations.count()):
@@ -339,11 +362,17 @@ class TriageWidget(QWidget):
             self.doc_list.addItem(item)
         self.doc_list.blockSignals(False)
 
-        # Reselect
+        # Reselect. When the previously-shown document is still in the list we
+        # restore its highlight WITH SIGNALS BLOCKED so _on_doc_changed does not
+        # re-fire — re-firing would reload the PDF and snap the viewer back to
+        # page 1 on every 5-second poll. Only when the selection genuinely
+        # changes (different doc, or the old one is gone) do we let _show_doc run.
         if prev_id is not None:
             for i in range(self.doc_list.count()):
                 if self.doc_list.item(i).data(Qt.ItemDataRole.UserRole) == prev_id:
+                    self.doc_list.blockSignals(True)
                     self.doc_list.setCurrentRow(i)
+                    self.doc_list.blockSignals(False)
                     return
         if self.doc_list.count():
             self.doc_list.setCurrentRow(0)
@@ -358,8 +387,16 @@ class TriageWidget(QWidget):
                 w.deleteLater()
         for b in self.svc.buckets():
             btn = QPushButton(b.name)
+            # White "card" button with the bucket's color as a left accent
+            # stripe and text tint — keeps the color coding without a solid fill.
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setStyleSheet(
-                f"text-align:left; padding:6px 10px; border-left:4px solid {b.color};"
+                f"QPushButton {{ text-align:left; padding:8px 12px; font-weight:600;"
+                f" color:{b.color}; background:#ffffff;"
+                f" border:1px solid #e2e8f0; border-left:4px solid {b.color};"
+                f" border-radius:8px; }}"
+                f"QPushButton:hover {{ background:#f8fafc; border-color:#cbd5e1;"
+                f" border-left:4px solid {b.color}; }}"
             )
             btn.clicked.connect(lambda _=False, bucket=b: self._move_to(bucket))
             self.routing_layout.addWidget(btn)

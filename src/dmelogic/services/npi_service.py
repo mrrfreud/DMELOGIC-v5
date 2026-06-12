@@ -291,20 +291,27 @@ class NPILookupService:
         """
         if not first_name and not last_name:
             return [], "Please provide at least a first or last name"
-        
-        # Build query parameters
+
+        fn = (first_name or "").strip()
+        ln = (last_name or "").strip()
+        st = (state or "").strip().upper()
+
+        # The CMS NPI Registry API honors `state` and `first_name` reliably, but
+        # a lone `last_name` is notoriously loose — it returns a large, partly
+        # unrelated set. So we fetch a wide page (up to the API max of 200) using
+        # whatever the API filters well on, then filter to true name matches
+        # client-side. This guarantees the displayed rows actually match.
         params = {
             "version": "2.1",
-            "limit": min(limit, 200)
+            "limit": 200,
         }
-        
-        if first_name:
-            params["first_name"] = first_name.strip()
-        if last_name:
-            params["last_name"] = last_name.strip()
-        if state:
-            params["state"] = state.strip().upper()
-        
+        if fn:
+            params["first_name"] = fn
+        if ln:
+            params["last_name"] = ln
+        if st:
+            params["state"] = st
+
         # Query NPI Registry API
         try:
             print(f"[API CALL] Name search: {params}")
@@ -313,23 +320,42 @@ class NPILookupService:
                 params=params,
                 timeout=self.API_TIMEOUT
             )
-            
+
             response.raise_for_status()
             data = response.json()
-            
+
             if data.get("result_count", 0) == 0:
                 return [], "No prescribers found matching search criteria"
-            
-            # Extract and cache all results
+
+            ln_u = ln.upper()
+            fn_u = fn.upper()
+
             results = []
             for result in data["results"]:
                 prescriber_data = self._extract_prescriber_data(result)
+
+                # Client-side relevance filter: keep only rows whose name
+                # actually matches what was typed (prefix match, case-insensitive)
+                # so the loose API last_name behavior can't leak wrong names.
+                cand_last = (prescriber_data.get("last_name") or "").upper()
+                cand_first = (prescriber_data.get("first_name") or "").upper()
+                if ln_u and ln_u not in cand_last:
+                    continue
+                if fn_u and not cand_first.startswith(fn_u):
+                    continue
+
                 results.append(prescriber_data)
-                
-                # Cache each result
+
+                # Cache each kept result
                 if prescriber_data.get("npi"):
                     self._save_to_cache(prescriber_data["npi"], prescriber_data)
-            
+
+                if len(results) >= min(limit, 200):
+                    break
+
+            if not results:
+                return [], "No prescribers found matching search criteria"
+
             return results, None
         
         except requests.Timeout:

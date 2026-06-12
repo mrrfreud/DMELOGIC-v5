@@ -34,11 +34,29 @@ def _ensure_venv() -> None:
         if getattr(sys, "frozen", False):
             return
 
-        root_dir = os.path.dirname(os.path.abspath(__file__))
-        venv_python = os.path.join(root_dir, "venv", "Scripts", "python.exe")
-        if not os.path.exists(venv_python):
-            venv_python = os.path.join(root_dir, "venv", "bin", "python")
-        if not os.path.exists(venv_python):
+        module_dir = os.path.dirname(os.path.abspath(__file__))
+        candidate_roots = [
+            module_dir,
+            os.path.dirname(module_dir),
+            os.path.dirname(os.path.dirname(module_dir)),
+            os.path.dirname(os.path.dirname(os.path.dirname(module_dir))),
+        ]
+
+        venv_python = None
+        for root_dir in candidate_roots:
+            for venv_name in (".venv", "venv"):
+                win_path = os.path.join(root_dir, venv_name, "Scripts", "python.exe")
+                posix_path = os.path.join(root_dir, venv_name, "bin", "python")
+                if os.path.exists(win_path):
+                    venv_python = win_path
+                    break
+                if os.path.exists(posix_path):
+                    venv_python = posix_path
+                    break
+            if venv_python:
+                break
+
+        if not venv_python:
             return
 
         current = os.path.normpath(sys.executable)

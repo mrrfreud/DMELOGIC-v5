@@ -71,8 +71,8 @@ class ReportViewer(QWidget):
         header_frame = QFrame()
         header_frame.setStyleSheet("""
             QFrame {
-                background-color: #f5f5f5;
-                border-bottom: 2px solid #1976d2;
+                background-color: transparent;
+                border-bottom: 1px solid #e2e8f0;
                 padding: 8px;
             }
         """)
@@ -82,34 +82,35 @@ class ReportViewer(QWidget):
         title_font = QFont("Segoe UI", 13)
         title_font.setBold(True)
         self.title_label.setFont(title_font)
-        self.title_label.setStyleSheet("color: #1976d2;")
+        self.title_label.setStyleSheet("color: #0f172a;")
         header_layout.addWidget(self.title_label)
 
         header_layout.addStretch()
 
-        # Export buttons in header
+        # Export buttons in header — neutral ghost; the per-button color now
+        # only tints the hover border (subtle cue, no saturated fills).
         self.csv_btn = QPushButton("\U0001f4be CSV")
-        self.csv_btn.setStyleSheet(self._button_style("#388e3c"))
+        self.csv_btn.setStyleSheet(self._button_style("#16a34a"))
         self.csv_btn.clicked.connect(self._export_csv)
         header_layout.addWidget(self.csv_btn)
 
         self.excel_btn = QPushButton("\U0001f4ca Excel")
-        self.excel_btn.setStyleSheet(self._button_style("#1e7e34"))
+        self.excel_btn.setStyleSheet(self._button_style("#15803d"))
         self.excel_btn.clicked.connect(self._export_excel)
         header_layout.addWidget(self.excel_btn)
 
         self.pdf_btn = QPushButton("\U0001f4c4 PDF")
-        self.pdf_btn.setStyleSheet(self._button_style("#d32f2f"))
+        self.pdf_btn.setStyleSheet(self._button_style("#dc2626"))
         self.pdf_btn.clicked.connect(self._export_pdf)
         header_layout.addWidget(self.pdf_btn)
 
         self.print_btn = QPushButton("\U0001f5a8 Print")
-        self.print_btn.setStyleSheet(self._button_style("#455a64"))
+        self.print_btn.setStyleSheet(self._button_style("#64748b"))
         self.print_btn.clicked.connect(self._print_report)
         header_layout.addWidget(self.print_btn)
 
         self.refresh_btn = QPushButton("\U0001f50d Generate")
-        self.refresh_btn.setStyleSheet(self._button_style("#1976d2"))
+        self.refresh_btn.setStyleSheet(self._primary_style())
         self.refresh_btn.setToolTip("Generate report using current filters")
         self.refresh_btn.clicked.connect(self._on_refresh)
         header_layout.addWidget(self.refresh_btn)
@@ -157,9 +158,10 @@ class ReportViewer(QWidget):
         self.summary_label = QLabel("")
         self.summary_label.setStyleSheet("""
             QLabel {
-                background-color: #e8f4f8;
-                padding: 6px;
-                border-radius: 3px;
+                background-color: #f1f5f9;
+                color: #475569;
+                padding: 6px 10px;
+                border-radius: 8px;
                 font-size: 10pt;
             }
         """)
@@ -169,21 +171,27 @@ class ReportViewer(QWidget):
         """Create the data table."""
         self.table = QTableWidget()
         self.table.setAlternatingRowColors(True)
+        self.table.setShowGrid(False)
         self.table.setStyleSheet("""
             QTableWidget {
-                gridline-color: #e0e0e0;
-                background-color: white;
-                alternate-background-color: #f8f9fa;
+                gridline-color: #e2e8f0;
+                background-color: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 10px;
+                alternate-background-color: #f8fafc;
+                selection-background-color: #e8f0fe;
+                selection-color: #0f172a;
             }
             QTableWidget::item {
-                padding: 4px;
+                padding: 6px 8px;
             }
             QHeaderView::section {
-                background-color: #1976d2;
-                color: white;
-                padding: 6px;
+                background-color: #f8fafc;
+                color: #64748b;
+                padding: 8px;
                 font-weight: 600;
                 border: none;
+                border-bottom: 1px solid #e2e8f0;
             }
         """)
 
@@ -193,28 +201,45 @@ class ReportViewer(QWidget):
 
         parent_layout.addWidget(self.table, 1)
 
-    def _button_style(self, color: str) -> str:
-        """Generate button stylesheet."""
+    def _button_style(self, accent: str = "#cbd5e1") -> str:
+        """Neutral ghost button; ``accent`` only tints the hover border."""
         return f"""
             QPushButton {{
-                background-color: {color};
-                color: white;
-                border: none;
+                background-color: #ffffff;
+                color: #0f172a;
+                border: 1px solid #e2e8f0;
                 padding: 6px 12px;
-                border-radius: 3px;
+                border-radius: 8px;
                 font-weight: 600;
                 min-width: 80px;
             }}
             QPushButton:hover {{
-                opacity: 0.9;
+                background-color: #f1f5f9;
+                border-color: {accent};
             }}
             QPushButton:pressed {{
-                background-color: #000;
+                background-color: #e2e8f0;
             }}
             QPushButton:disabled {{
-                background-color: #ccc;
-                color: #888;
+                background-color: #f8fafc;
+                color: #cbd5e1;
             }}
+        """
+
+    def _primary_style(self) -> str:
+        """Filled accent style for the single primary action (Generate)."""
+        return """
+            QPushButton {
+                background-color: #2563eb;
+                color: #ffffff;
+                border: none;
+                padding: 6px 14px;
+                border-radius: 8px;
+                font-weight: 600;
+                min-width: 80px;
+            }
+            QPushButton:hover { background-color: #1d4ed8; }
+            QPushButton:disabled { background-color: #cbd5e1; color: #ffffff; }
         """
 
     # ========================================================================

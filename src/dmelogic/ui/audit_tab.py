@@ -33,41 +33,44 @@ class AuditResult:
 def build_audit_tab(parent) -> QWidget:
     """Build the Audit tab widget."""
     tab = QWidget()
+    tab.setObjectName("auditTab")
+    tab.setStyleSheet(
+        "#auditTab { background:#f3f5f9; }"
+        # Light cards for the group boxes.
+        "#auditTab QGroupBox { background:#ffffff; border:1px solid #e2e8f0;"
+        " border-radius:10px; margin-top:10px; padding-top:10px; font-weight:600;"
+        " color:#0f172a; }"
+        "#auditTab QGroupBox::title { subcontrol-origin:margin; left:10px;"
+        " padding:0 8px; color:#475569; }"
+        # Inputs.
+        "#auditTab QComboBox, #auditTab QDateEdit, #auditTab QSpinBox {"
+        " background:#ffffff; color:#0f172a; border:1px solid #e2e8f0;"
+        " border-radius:8px; padding:6px 10px; }"
+        "#auditTab QComboBox:hover, #auditTab QDateEdit:hover,"
+        " #auditTab QSpinBox:hover { border-color:#cbd5e1; }"
+        "#auditTab QComboBox QAbstractItemView { background:#ffffff; color:#0f172a;"
+        " selection-background-color:#e8f0fe; selection-color:#0f172a; }"
+        "#auditTab QLabel { color:#334155; }"
+    )
     layout = QVBoxLayout(tab)
-    layout.setContentsMargins(12, 12, 12, 12)
+    layout.setContentsMargins(20, 18, 20, 18)
     layout.setSpacing(10)
 
     # Header
-    header = QLabel("🔍 Audit & Compliance Reports")
+    header = QLabel("Audit & Compliance")
     header_font = QFont("Segoe UI", 14)
     header_font.setBold(True)
     header.setFont(header_font)
-    header.setStyleSheet("color: #ffffff; padding: 5px;")
+    header.setStyleSheet("color:#0f172a; font-size:22px; font-weight:700;")
     layout.addWidget(header)
 
     # Description
     desc = QLabel("Run audit reports to identify orders with missing data, compliance issues, or anomalies.")
-    desc.setStyleSheet("color: #94a3b8; font-size: 10pt; margin-bottom: 10px;")
+    desc.setStyleSheet("color: #64748b; font-size: 12px; margin-bottom: 10px;")
     layout.addWidget(desc)
 
     # ===== Report Selection Panel =====
     report_group = QGroupBox("Select Audit Report")
-    report_group.setStyleSheet("""
-        QGroupBox {
-            font-weight: 600;
-            border: 1px solid #334155;
-            border-radius: 6px;
-            margin-top: 10px;
-            padding-top: 10px;
-            background-color: #1e293b;
-        }
-        QGroupBox::title {
-            subcontrol-origin: margin;
-            left: 10px;
-            padding: 0 8px;
-            color: #e2e8f0;
-        }
-    """)
     report_layout = QVBoxLayout(report_group)
 
     # Report type selector row
@@ -75,7 +78,7 @@ def build_audit_tab(parent) -> QWidget:
     selector_row.setSpacing(15)
 
     report_type_label = QLabel("Report Type:")
-    report_type_label.setStyleSheet("color: #e2e8f0; font-weight: 500;")
+    report_type_label.setStyleSheet("color: #334155; font-weight: 600;")
     selector_row.addWidget(report_type_label)
 
     parent.audit_report_combo = QComboBox()
@@ -93,28 +96,6 @@ def build_audit_tab(parent) -> QWidget:
         "🔗 Orphaned Order Items",
         "📊 Complete Data Quality Summary",
     ])
-    parent.audit_report_combo.setStyleSheet("""
-        QComboBox {
-            background-color: #334155;
-            color: #f1f5f9;
-            border: 1px solid #475569;
-            border-radius: 4px;
-            padding: 6px 10px;
-            min-height: 24px;
-        }
-        QComboBox:hover {
-            border-color: #60a5fa;
-        }
-        QComboBox::drop-down {
-            border: none;
-            padding-right: 8px;
-        }
-        QComboBox QAbstractItemView {
-            background-color: #334155;
-            color: #f1f5f9;
-            selection-background-color: #2563eb;
-        }
-    """)
     selector_row.addWidget(parent.audit_report_combo)
 
     selector_row.addStretch(1)
@@ -126,66 +107,39 @@ def build_audit_tab(parent) -> QWidget:
 
     # Date range filter
     date_from_label = QLabel("From:")
-    date_from_label.setStyleSheet("color: #e2e8f0;")
+    date_from_label.setStyleSheet("color: #334155; font-weight: 600;")
     filters_row.addWidget(date_from_label)
 
     parent.audit_date_from = QDateEdit()
     parent.audit_date_from.setDisplayFormat("MM/dd/yyyy")
     parent.audit_date_from.setCalendarPopup(True)
     parent.audit_date_from.setDate(QDate.currentDate().addMonths(-3))
-    parent.audit_date_from.setStyleSheet("""
-        QDateEdit {
-            background-color: #334155;
-            color: #f1f5f9;
-            border: 1px solid #475569;
-            border-radius: 4px;
-            padding: 4px 8px;
-        }
-    """)
     filters_row.addWidget(parent.audit_date_from)
 
     date_to_label = QLabel("To:")
-    date_to_label.setStyleSheet("color: #e2e8f0;")
+    date_to_label.setStyleSheet("color: #334155; font-weight: 600;")
     filters_row.addWidget(date_to_label)
 
     parent.audit_date_to = QDateEdit()
     parent.audit_date_to.setDisplayFormat("MM/dd/yyyy")
     parent.audit_date_to.setCalendarPopup(True)
     parent.audit_date_to.setDate(QDate.currentDate())
-    parent.audit_date_to.setStyleSheet("""
-        QDateEdit {
-            background-color: #334155;
-            color: #f1f5f9;
-            border: 1px solid #475569;
-            border-radius: 4px;
-            padding: 4px 8px;
-        }
-    """)
     filters_row.addWidget(parent.audit_date_to)
 
     # Days threshold (for aging reports)
     days_label = QLabel("Days Threshold:")
-    days_label.setStyleSheet("color: #e2e8f0;")
+    days_label.setStyleSheet("color: #334155; font-weight: 600;")
     filters_row.addWidget(days_label)
 
     parent.audit_days_threshold = QSpinBox()
     parent.audit_days_threshold.setRange(1, 365)
     parent.audit_days_threshold.setValue(30)
-    parent.audit_days_threshold.setStyleSheet("""
-        QSpinBox {
-            background-color: #334155;
-            color: #f1f5f9;
-            border: 1px solid #475569;
-            border-radius: 4px;
-            padding: 4px 8px;
-            min-width: 60px;
-        }
-    """)
+    parent.audit_days_threshold.setMinimumWidth(70)
     filters_row.addWidget(parent.audit_days_threshold)
 
     # Status filter
     status_label = QLabel("Status Filter:")
-    status_label.setStyleSheet("color: #e2e8f0;")
+    status_label.setStyleSheet("color: #334155; font-weight: 600;")
     filters_row.addWidget(status_label)
 
     parent.audit_status_filter = QComboBox()
@@ -195,16 +149,7 @@ def build_audit_tab(parent) -> QWidget:
         "Approved", "Shipped", "Delivered", "Picked Up",
         "Billed", "Unbilled", "Paid", "Cancelled"
     ])
-    parent.audit_status_filter.setStyleSheet("""
-        QComboBox {
-            background-color: #334155;
-            color: #f1f5f9;
-            border: 1px solid #475569;
-            border-radius: 4px;
-            padding: 4px 8px;
-            min-width: 120px;
-        }
-    """)
+    parent.audit_status_filter.setMinimumWidth(120)
     filters_row.addWidget(parent.audit_status_filter)
 
     filters_row.addStretch(1)
@@ -214,74 +159,36 @@ def build_audit_tab(parent) -> QWidget:
     btn_row = QHBoxLayout()
     btn_row.setSpacing(10)
 
+    _PRIMARY = (
+        "QPushButton { background:#2563eb; color:white; border:none;"
+        " border-radius:8px; padding:8px 18px; font-weight:600; }"
+        "QPushButton:hover { background:#1d4ed8; }"
+    )
+    _GHOST = (
+        "QPushButton { background:#ffffff; color:#0f172a; font-weight:600;"
+        " border:1px solid #e2e8f0; border-radius:8px; padding:8px 16px; }"
+        "QPushButton:hover { background:#f1f5f9; border-color:#cbd5e1; }"
+    )
+
     run_btn = QPushButton("▶️ Run Audit Report")
-    run_btn.setStyleSheet("""
-        QPushButton {
-            background-color: #2563eb;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            padding: 8px 20px;
-            font-weight: 600;
-            font-size: 10pt;
-        }
-        QPushButton:hover {
-            background-color: #1d4ed8;
-        }
-    """)
+    run_btn.setStyleSheet(_PRIMARY)
     run_btn.clicked.connect(lambda: run_audit_report(parent))
     btn_row.addWidget(run_btn)
 
     export_btn = QPushButton("📤 Export to CSV")
-    export_btn.setStyleSheet("""
-        QPushButton {
-            background-color: #059669;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            padding: 8px 16px;
-            font-weight: 500;
-        }
-        QPushButton:hover {
-            background-color: #047857;
-        }
-    """)
+    export_btn.setStyleSheet(_GHOST)
     export_btn.clicked.connect(lambda: export_audit_results(parent))
     btn_row.addWidget(export_btn)
 
     clear_btn = QPushButton("🗑️ Clear Results")
-    clear_btn.setStyleSheet("""
-        QPushButton {
-            background-color: #6b7280;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            padding: 8px 16px;
-            font-weight: 500;
-        }
-        QPushButton:hover {
-            background-color: #4b5563;
-        }
-    """)
+    clear_btn.setStyleSheet(_GHOST)
     clear_btn.clicked.connect(lambda: clear_audit_results(parent))
     btn_row.addWidget(clear_btn)
 
     # Sync order docs to patient profiles button
     sync_docs_btn = QPushButton("🔄 Sync Order Docs to Patients")
     sync_docs_btn.setToolTip("Link all order documents to their corresponding patient profiles")
-    sync_docs_btn.setStyleSheet("""
-        QPushButton {
-            background-color: #7c3aed;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            padding: 8px 16px;
-            font-weight: 500;
-        }
-        QPushButton:hover {
-            background-color: #6d28d9;
-        }
-    """)
+    sync_docs_btn.setStyleSheet(_GHOST)
     sync_docs_btn.clicked.connect(lambda: sync_order_docs_to_patients(parent))
     btn_row.addWidget(sync_docs_btn)
 
@@ -289,7 +196,7 @@ def build_audit_tab(parent) -> QWidget:
 
     # Summary stats label
     parent.audit_summary_label = QLabel("Run a report to see results")
-    parent.audit_summary_label.setStyleSheet("color: #94a3b8; font-style: italic;")
+    parent.audit_summary_label.setStyleSheet("color: #64748b; font-style: italic;")
     btn_row.addWidget(parent.audit_summary_label)
 
     report_layout.addLayout(btn_row)
@@ -297,22 +204,6 @@ def build_audit_tab(parent) -> QWidget:
 
     # ===== Results Table =====
     results_group = QGroupBox("Audit Results")
-    results_group.setStyleSheet("""
-        QGroupBox {
-            font-weight: 600;
-            border: 1px solid #334155;
-            border-radius: 6px;
-            margin-top: 10px;
-            padding-top: 10px;
-            background-color: #1e293b;
-        }
-        QGroupBox::title {
-            subcontrol-origin: margin;
-            left: 10px;
-            padding: 0 8px;
-            color: #e2e8f0;
-        }
-    """)
     results_layout = QVBoxLayout(results_group)
 
     parent.audit_results_table = QTableWidget()
@@ -322,30 +213,27 @@ def build_audit_tab(parent) -> QWidget:
     ])
     parent.audit_results_table.setAlternatingRowColors(True)
     parent.audit_results_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+    parent.audit_results_table.setShowGrid(False)
+    parent.audit_results_table.verticalHeader().setVisible(False)
+    parent.audit_results_table.verticalHeader().setDefaultSectionSize(34)
     parent.audit_results_table.setStyleSheet("""
         QTableWidget {
-            background-color: #1e293b;
-            color: #e2e8f0;
-            gridline-color: #334155;
-            border: 1px solid #334155;
-            border-radius: 4px;
+            background-color: #ffffff;
+            color: #0f172a;
+            gridline-color: #e2e8f0;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            alternate-background-color: #f8fafc;
+            selection-background-color: #e8f0fe;
+            selection-color: #0f172a;
         }
-        QTableWidget::item {
-            color: #e2e8f0;
-            padding: 6px;
-        }
-        QTableWidget::item:selected {
-            background-color: #2563eb;
-            color: #ffffff;
-        }
-        QTableWidget::item:alternate {
-            background-color: #0f172a;
-        }
+        QTableWidget::item { padding: 6px 8px; }
         QHeaderView::section {
-            background-color: #334155;
-            color: #f1f5f9;
+            background-color: #f8fafc;
+            color: #64748b;
             padding: 8px;
             border: none;
+            border-bottom: 1px solid #e2e8f0;
             font-weight: 600;
         }
     """)
@@ -436,7 +324,7 @@ def run_audit_report(parent) -> None:
             f"🟡 {warning_count} Warning | "
             f"🔵 {info_count} Info"
         )
-        parent.audit_summary_label.setStyleSheet("color: #e2e8f0; font-weight: 500;")
+        parent.audit_summary_label.setStyleSheet("color: #334155; font-weight: 600;")
         
     except Exception as e:
         import traceback
@@ -809,7 +697,7 @@ def populate_audit_table(parent, results: List[AuditResult]) -> None:
         "Warning": "#f59e0b",   # Yellow/Orange
         "Info": "#3b82f6"       # Blue
     }
-    base_text_color = QColor("#e2e8f0")
+    base_text_color = QColor("#0f172a")
     
     for row_idx, result in enumerate(results):
         # Order #

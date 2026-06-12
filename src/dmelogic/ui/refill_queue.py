@@ -46,6 +46,24 @@ from dmelogic.db.base import get_connection
 from dmelogic.config import debug_log
 
 
+# Shared modern button styles (light theme), consistent with the main tabs.
+_RQ_PRIMARY = (
+    "QPushButton { background:#2563eb; color:#ffffff; font-weight:600;"
+    " padding:8px 18px; border:none; border-radius:8px; }"
+    "QPushButton:hover { background:#1d4ed8; }"
+)
+_RQ_GHOST = (
+    "QPushButton { background:#ffffff; color:#0f172a; font-weight:600;"
+    " padding:8px 14px; border:1px solid #e2e8f0; border-radius:8px; }"
+    "QPushButton:hover { background:#f1f5f9; border-color:#cbd5e1; }"
+)
+_RQ_DANGER = (
+    "QPushButton { background:#ffffff; color:#dc2626; font-weight:600;"
+    " padding:8px 14px; border:1px solid #fecaca; border-radius:8px; }"
+    "QPushButton:hover { background:#fef2f2; border-color:#dc2626; }"
+)
+
+
 # ═══════════════════════════════════════════════════════════════════
 # Stat Card Widget
 # ═══════════════════════════════════════════════════════════════════
@@ -135,9 +153,7 @@ class RefillQueueWidget(QWidget):
         header_row.addStretch()
 
         self.btn_refresh = QPushButton("🔄 Refresh")
-        self.btn_refresh.setStyleSheet(
-            "background: #E5E7EB; color: #374151; border-radius: 6px; padding: 6px 14px; font-weight: 500;"
-        )
+        self.btn_refresh.setStyleSheet(_RQ_GHOST)
         self.btn_refresh.clicked.connect(self.refresh_queue)
         header_row.addWidget(self.btn_refresh)
 
@@ -175,28 +191,21 @@ class RefillQueueWidget(QWidget):
         action_row.setSpacing(8)
 
         self.btn_process_all_due = QPushButton("🚀 Process All Overdue + Due Today")
-        self.btn_process_all_due.setStyleSheet(
-            "background: #059669; color: white; border-radius: 6px; "
-            "padding: 8px 20px; font-weight: 700; font-size: 12px;"
-        )
+        self.btn_process_all_due.setStyleSheet(_RQ_PRIMARY)
         self.btn_process_all_due.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_process_all_due.clicked.connect(self._process_all_due)
         action_row.addWidget(self.btn_process_all_due)
 
         self.btn_process_selected = QPushButton("✅ Process Selected")
-        self.btn_process_selected.setStyleSheet(
-            "background: #3B82F6; color: white; border-radius: 6px; "
-            "padding: 8px 16px; font-weight: 600;"
-        )
+        self.btn_process_selected.setStyleSheet(_RQ_GHOST)
+        self.btn_process_selected.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_process_selected.clicked.connect(self._process_selected)
         action_row.addWidget(self.btn_process_selected)
 
         # Unlock / Reset refill flag button
         self.btn_unlock = QPushButton("🔓 Unlock / Reset Refill")
-        self.btn_unlock.setStyleSheet(
-            "background: #F59E0B; color: white; border-radius: 6px; "
-            "padding: 8px 16px; font-weight: 600;"
-        )
+        self.btn_unlock.setStyleSheet(_RQ_GHOST)
+        self.btn_unlock.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_unlock.setToolTip(
             "Manually unlock an order or mark it as fully refilled.\n"
             "Use this to fix stuck orders that show errors."
@@ -204,19 +213,41 @@ class RefillQueueWidget(QWidget):
         self.btn_unlock.clicked.connect(self._show_refill_override_dialog)
         action_row.addWidget(self.btn_unlock)
 
+        # Remove checked orders from the queue (temporary — locks the order so
+        # it's hidden until you Unlock / Reset Refill it again).
+        self.btn_remove = QPushButton("🚫 Remove from Queue")
+        self.btn_remove.setStyleSheet(_RQ_GHOST)
+        self.btn_remove.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_remove.setToolTip(
+            "Hide the checked orders from the refill queue.\n"
+            "Reversible — use 'Unlock / Reset Refill' to bring them back."
+        )
+        self.btn_remove.clicked.connect(self._remove_from_queue)
+        action_row.addWidget(self.btn_remove)
+
+        # Permanently remove checked orders (marks refills complete — automation
+        # will not pick them up again).
+        self.btn_remove_perm = QPushButton("🗑️ Permanently Remove")
+        self.btn_remove_perm.setStyleSheet(_RQ_DANGER)
+        self.btn_remove_perm.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_remove_perm.setToolTip(
+            "Permanently remove the checked orders from refill automation\n"
+            "(marks their refills as completed). This cannot be auto-undone."
+        )
+        self.btn_remove_perm.clicked.connect(self._permanently_remove_from_queue)
+        action_row.addWidget(self.btn_remove_perm)
+
         action_row.addStretch()
 
         # Select all checkbox
         self.chk_select_all = QCheckBox("Select All Visible")
-        self.chk_select_all.setStyleSheet("font-weight: 500;")
+        self.chk_select_all.setStyleSheet("font-weight: 500; color: #475569;")
         self.chk_select_all.stateChanged.connect(self._toggle_select_all)
         action_row.addWidget(self.chk_select_all)
 
         # Export
         self.btn_export = QPushButton("📄 Export PDF")
-        self.btn_export.setStyleSheet(
-            "background: #E5E7EB; color: #374151; border-radius: 6px; padding: 6px 14px;"
-        )
+        self.btn_export.setStyleSheet(_RQ_GHOST)
         self.btn_export.clicked.connect(self._export_pdf)
         action_row.addWidget(self.btn_export)
 
@@ -606,6 +637,97 @@ class RefillQueueWidget(QWidget):
                     if oid and oid not in order_ids:
                         order_ids.append(oid)
         return order_ids
+
+    def _open_orders_conn(self):
+        """Open a connection to orders.db using this widget's configured path."""
+        if self.orders_db_file:
+            conn = sqlite3.connect(self.orders_db_file)
+        else:
+            conn = get_connection("orders.db", folder_path=self.folder_path)
+        return conn
+
+    def _remove_from_queue(self):
+        """Temporarily remove (lock) the checked orders so they leave the queue.
+
+        Reversible via the existing 'Unlock / Reset Refill' tool — the loader
+        already excludes orders where is_locked = 1.
+        """
+        order_ids = self._get_checked_order_ids()
+        if not order_ids:
+            QMessageBox.information(
+                self, "Remove from Queue",
+                "No orders are checked. Tick the checkbox column to select orders first."
+            )
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Remove from Queue",
+            f"Hide {len(order_ids)} order(s) from the refill queue?\n\n"
+            "This is reversible — use 'Unlock / Reset Refill' to bring them back.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            conn = self._open_orders_conn()
+            cur = conn.cursor()
+            cur.executemany(
+                "UPDATE orders SET is_locked = 1 WHERE id = ?",
+                [(oid,) for oid in order_ids],
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            QMessageBox.critical(self, "Remove from Queue", f"Failed to remove orders:\n{e}")
+            return
+
+        self.refresh_queue()
+        self.summary_label.setText(f"Removed {len(order_ids)} order(s) from the queue")
+
+    def _permanently_remove_from_queue(self):
+        """Permanently remove the checked orders from refill automation.
+
+        Marks the orders' refills as completed so the loader (which excludes
+        refill_completed = 1) never surfaces them again.
+        """
+        order_ids = self._get_checked_order_ids()
+        if not order_ids:
+            QMessageBox.information(
+                self, "Permanently Remove",
+                "No orders are checked. Tick the checkbox column to select orders first."
+            )
+            return
+
+        reply = QMessageBox.warning(
+            self,
+            "Permanently Remove from Queue",
+            f"Permanently remove {len(order_ids)} order(s) from refill automation?\n\n"
+            "Their refills will be marked completed and the queue will no longer "
+            "track them. This is not auto-undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            conn = self._open_orders_conn()
+            cur = conn.cursor()
+            cur.executemany(
+                "UPDATE orders SET refill_completed = 1 WHERE id = ?",
+                [(oid,) for oid in order_ids],
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            QMessageBox.critical(self, "Permanently Remove", f"Failed to remove orders:\n{e}")
+            return
+
+        self.refresh_queue()
+        self.summary_label.setText(f"Permanently removed {len(order_ids)} order(s) from refill automation")
 
     def _process_all_due(self):
         """Process all overdue + due today refills in one click."""
