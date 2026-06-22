@@ -68,6 +68,69 @@ class TriageService:
     def __init__(self, store: Optional[TriageStore] = None):
         self.store = store or TriageStore()
 
+    def migrate_bucketed_docs_to_scans_letters(self) -> int:
+        """Move all currently bucketed docs into Scans/<Letter> and mark buckets.
+
+        Returns the number of documents moved.
+        """
+        moved = 0
+        from dmelogic.config import data_root
+        scans_root = data_root() / "Scans"
+
+        # Ensure all active buckets now point to Scans with letter filing on.
+        try:
+            for b in self.store.list_buckets(include_inactive=False):
+                changed = False
+                if (b.folder or "").strip().replace("\\", "/").lower() != "scans":
+                    b.folder = "Scans"
+                    changed = True
+                if not b.letter_filing:
+                    b.letter_filing = True
+                    changed = True
+                if changed:
+                    self.store.update_bucket(b)
+        except Exception as e:
+            logger.warning("Bucket migration settings update failed: %s", e)
+
+        # Move existing bucketed docs physically into Scans/<Letter>.
+        try:
+            docs = self.store.list_documents(bucket_id="ANY")
+        except Exception as e:
+            logger.warning("Bucket migration list failed: %s", e)
+            return moved
+
+        for doc in docs:
+            if doc.bucket_id is None or doc.dismissed:
+                continue
+            src = Path(doc.current_path)
+            if not src.exists():
+                continue
+
+            letter = self._letter_for(doc)
+            dest_dir = scans_root / letter
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dst = dest_dir / src.name
+            try:
+                dst = self._move_over(src, dst)
+            except OSError as e:
+                logger.warning("Bucket migration move failed %s -> %s: %s", src, dst, e)
+                continue
+
+            if str(dst) != doc.current_path:
+                doc.previous_path = doc.current_path
+                doc.current_path = str(dst)
+                doc.filename = dst.name
+                self.store.update_document(doc)
+                try:
+                    b = self.store.get_bucket(doc.bucket_id) if doc.bucket_id else None
+                    detail = f"{b.name} -> Scans/{letter}" if b else f"Scans/{letter}"
+                except Exception:
+                    detail = f"Scans/{letter}"
+                self.store.add_event(doc.id, EventType.MOVED, detail, _current_user())
+                moved += 1
+
+        return moved
+
     # ── intake ──────────────────────────────────────────────────────────
     def scan_inbox(self) -> list[Document]:
         """Register new files in the intake folder; drop orphaned records.

@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QListWidget,
     QGroupBox,
+    QSizePolicy,
 )
 from PyQt6.QtCore import QStringListModel
 from PyQt6.QtWidgets import QCompleter
@@ -201,12 +202,14 @@ class OrderWizardResult:
     prescriber_name: str
     prescriber_npi: str
     prescriber_phone: str
+    prescriber_fax: str = ""
     
     # Second prescriber (for orders with multiple RXs from different doctors)
     rx_date_2: str = ""
     prescriber_name_2: str = ""
     prescriber_npi_2: str = ""
     prescriber_phone_2: str = ""
+    prescriber_fax_2: str = ""
     
     items: List[OrderItem] = field(default_factory=list)
 
@@ -742,7 +745,20 @@ class OrderWizard(QDialog):
 
     def _build_rx_page(self) -> None:
         page = QWidget()
-        layout = QVBoxLayout(page)
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.setSpacing(0)
+
+        # Keep Step 2 fully usable on smaller screens/scales.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        page_layout.addWidget(scroll)
+
+        content = QWidget()
+        scroll.setWidget(content)
+
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(40, 20, 40, 20)
         layout.setSpacing(10)
 
@@ -812,6 +828,9 @@ class OrderWizard(QDialog):
         self.prescriber_name_edit.setPlaceholderText("Prescriber name (LAST, FIRST)")
         self.prescriber_npi_edit = QLineEdit()
         self.prescriber_phone_edit = QLineEdit()
+        self.prescriber_phone_edit.setPlaceholderText("(555) 555-5555")
+        self.prescriber_fax_edit = QLineEdit()
+        self.prescriber_fax_edit.setPlaceholderText("(555) 555-5555")
 
         # Prescriber row with Search and Add buttons
         prescriber_layout = QHBoxLayout()
@@ -834,7 +853,8 @@ class OrderWizard(QDialog):
 
         form.addRow("Prescriber:", prescriber_widget)
         form.addRow("NPI:", self.prescriber_npi_edit)
-        form.addRow("Phone:", self.prescriber_phone_edit)
+        form.addRow("Phone (for this order):", self.prescriber_phone_edit)
+        form.addRow("Fax (for this order):", self.prescriber_fax_edit)
 
         # ---- Second Prescriber Section (Collapsible) ----
         self.prescriber2_checkbox = QCheckBox("Add 2nd Prescriber / RX Date")
@@ -866,7 +886,9 @@ class OrderWizard(QDialog):
         self.prescriber_npi_2_edit = QLineEdit()
         self.prescriber_npi_2_edit.setPlaceholderText("NPI")
         self.prescriber_phone_2_edit = QLineEdit()
-        self.prescriber_phone_2_edit.setPlaceholderText("Phone")
+        self.prescriber_phone_2_edit.setPlaceholderText("(555) 555-5555")
+        self.prescriber_fax_2_edit = QLineEdit()
+        self.prescriber_fax_2_edit.setPlaceholderText("(555) 555-5555")
 
         prescriber2_layout = QHBoxLayout()
         prescriber2_layout.setContentsMargins(0, 0, 0, 0)
@@ -888,7 +910,8 @@ class OrderWizard(QDialog):
 
         prescriber2_form.addRow("Prescriber 2:", prescriber2_widget)
         prescriber2_form.addRow("NPI 2:", self.prescriber_npi_2_edit)
-        prescriber2_form.addRow("Phone 2:", self.prescriber_phone_2_edit)
+        prescriber2_form.addRow("Phone 2 (for this order):", self.prescriber_phone_2_edit)
+        prescriber2_form.addRow("Fax 2 (for this order):", self.prescriber_fax_2_edit)
 
         # Initially hide second prescriber fields
         self.prescriber2_container.setVisible(False)
@@ -912,7 +935,35 @@ class OrderWizard(QDialog):
         self.doctor_directions_edit.setPlaceholderText(
             "MD directions / sig (will be copied to each line item by default)."
         )
+        self.doctor_directions_edit.setMinimumHeight(72)
         form.addRow("Directions:", self.doctor_directions_edit)
+
+        # Ensure each row control remains fully visible with larger fonts/DPI.
+        for w in [
+            self.order_date_edit,
+            self.rx_date_edit,
+            self.rx_origin_combo,
+            self.prescriber_name_edit,
+            self.search_prescriber_btn,
+            self.add_prescriber_btn,
+            self.prescriber_npi_edit,
+            self.prescriber_phone_edit,
+            self.prescriber_fax_edit,
+            self.prescriber2_checkbox,
+            self.rx_date_2_edit,
+            self.prescriber_name_2_edit,
+            self.search_prescriber_2_btn,
+            self.add_prescriber_2_btn,
+            self.prescriber_npi_2_edit,
+            self.prescriber_phone_2_edit,
+            self.prescriber_fax_2_edit,
+            *self.dx_edits,
+        ]:
+            try:
+                w.setMinimumHeight(30)
+                w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            except Exception:
+                pass
 
         # Pre-fill from rx_context if available
         if self.rx_context.get("rx_date"):
@@ -926,6 +977,7 @@ class OrderWizard(QDialog):
         self.prescriber_name_edit.setText(self.rx_context.get("prescriber_name", ""))
         self.prescriber_npi_edit.setText(self.rx_context.get("prescriber_npi", ""))
         self.prescriber_phone_edit.setText(self.rx_context.get("prescriber_phone", ""))
+        self.prescriber_fax_edit.setText(self.rx_context.get("prescriber_fax", ""))
 
         layout.addLayout(form)
         layout.addStretch(1)
@@ -961,6 +1013,7 @@ class OrderWizard(QDialog):
                     self.prescriber_name_edit.setText(display_name)
                     self.prescriber_npi_edit.setText(prescriber.get('npi') or "")
                     self.prescriber_phone_edit.setText(prescriber.get('phone') or "")
+                    self.prescriber_fax_edit.setText(prescriber.get('fax') or "")
             
             dialog.accepted.connect(on_accepted)
             dialog.show()
@@ -997,6 +1050,7 @@ class OrderWizard(QDialog):
                 self.prescriber_name_edit.setText(display_name)
                 self.prescriber_npi_edit.setText(data.get('npi_number') or "")
                 self.prescriber_phone_edit.setText(data.get('phone') or "")
+                self.prescriber_fax_edit.setText(data.get('fax') or "")
                 
                 QMessageBox.information(
                     self, 
@@ -1112,6 +1166,7 @@ class OrderWizard(QDialog):
                     self.prescriber_name_2_edit.setText(display_name)
                     self.prescriber_npi_2_edit.setText(prescriber.get('npi') or "")
                     self.prescriber_phone_2_edit.setText(prescriber.get('phone') or "")
+                    self.prescriber_fax_2_edit.setText(prescriber.get('fax') or "")
 
             dialog.accepted.connect(on_accepted)
             dialog.show()
@@ -1142,6 +1197,7 @@ class OrderWizard(QDialog):
                 self.prescriber_name_2_edit.setText(display_name)
                 self.prescriber_npi_2_edit.setText(data.get('npi_number') or "")
                 self.prescriber_phone_2_edit.setText(data.get('phone') or "")
+                self.prescriber_fax_2_edit.setText(data.get('fax') or "")
 
                 QMessageBox.information(
                     self,
@@ -2159,6 +2215,7 @@ class OrderWizard(QDialog):
             prescriber_name=self.prescriber_name_edit.text().strip(),
             prescriber_npi=self.prescriber_npi_edit.text().strip(),
             prescriber_phone=self.prescriber_phone_edit.text().strip(),
+            prescriber_fax=self.prescriber_fax_edit.text().strip(),
             # Second prescriber (only if checkbox is checked and fields are filled)
             rx_date_2=self.rx_date_2_edit.date().toString("MM/dd/yyyy") if (
                 hasattr(self, 'prescriber2_checkbox') and 
@@ -2172,6 +2229,9 @@ class OrderWizard(QDialog):
                 hasattr(self, 'prescriber2_checkbox') and self.prescriber2_checkbox.isChecked()
             ) else "",
             prescriber_phone_2=self.prescriber_phone_2_edit.text().strip() if (
+                hasattr(self, 'prescriber2_checkbox') and self.prescriber2_checkbox.isChecked()
+            ) else "",
+            prescriber_fax_2=self.prescriber_fax_2_edit.text().strip() if (
                 hasattr(self, 'prescriber2_checkbox') and self.prescriber2_checkbox.isChecked()
             ) else "",
             items=items,
@@ -2342,6 +2402,16 @@ class OrderWizard(QDialog):
                         self,
                         "Order",
                         "Select or enter a prescriber before continuing.",
+                    )
+                    return False
+
+                prescriber_phone = self.prescriber_phone_edit.text().strip() if hasattr(self, "prescriber_phone_edit") else ""
+                prescriber_fax = self.prescriber_fax_edit.text().strip() if hasattr(self, "prescriber_fax_edit") else ""
+                if not prescriber_phone and not prescriber_fax:
+                    QMessageBox.warning(
+                        self,
+                        "Order",
+                        "Enter at least one prescriber contact method for this order (phone or fax).",
                     )
                     return False
 

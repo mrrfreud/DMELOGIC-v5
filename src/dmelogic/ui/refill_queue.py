@@ -134,6 +134,7 @@ class RefillQueueWidget(QWidget):
         self.folder_path = folder_path
         self.current_filter = "all_due"  # "overdue", "today", "this_week", "this_month", "all_due"
         self._refill_data: List[Dict[str, Any]] = []
+        self._last_refreshed_at = ""
 
         self._setup_ui()
 
@@ -317,13 +318,36 @@ class RefillQueueWidget(QWidget):
 
     def refresh_queue(self):
         """Reload all refill data from the database."""
-        self._refill_data = self._fetch_refill_data()
-        self._update_stats()
-        self._populate_table()
+        btn = getattr(self, "btn_refresh", None)
+        if btn is not None:
+            btn.setEnabled(False)
+            btn.setText("⏳ Refreshing...")
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
+        try:
+            # Keep paths current in case the app switched DB/folder at runtime.
+            if self.main_window is not None:
+                self.orders_db_file = getattr(self.main_window, "orders_database_file", self.orders_db_file)
+                self.folder_path = getattr(self.main_window, "folder_path", self.folder_path)
+
+            self._refill_data = self._fetch_refill_data()
+            self._last_refreshed_at = datetime.now().strftime("%I:%M:%S %p").lstrip("0")
+            self._update_stats()
+            self._populate_table()
+        except Exception as e:
+            debug_log(f"RefillQueue refresh error: {e}")
+            QMessageBox.warning(self, "Refresh Failed", f"Could not refresh refill queue:\n\n{e}")
+        finally:
+            QApplication.restoreOverrideCursor()
+            if btn is not None:
+                btn.setEnabled(True)
+                btn.setText("🔄 Refresh")
 
     def _fetch_refill_data(self) -> List[Dict[str, Any]]:
         """Fetch all orders with remaining refills and compute due dates."""
         results = []
+        conn = None
 
         try:
             db_path = self.orders_db_file
@@ -467,11 +491,15 @@ class RefillQueueWidget(QWidget):
                     "urgency_sort": urgency_sort,
                 })
 
-            conn.close()
-
         except Exception as e:
             debug_log(f"RefillQueue fetch error: {e}")
             print(f"RefillQueue fetch error: {e}")
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
         # Sort by urgency (overdue first), then patient name
         results.sort(key=lambda r: (r["urgency_sort"], r["patient_name"], r["order_id"]))
@@ -618,6 +646,7 @@ class RefillQueueWidget(QWidget):
 
         self.summary_label.setText(
             f"Showing {showing} items from {unique_orders} orders ({unique_patients} patients) — {filter_name}"
+            + (f" · Last refreshed {self._last_refreshed_at}" if self._last_refreshed_at else "")
         )
         self.summary_label.setStyleSheet("color: #059669; font-weight: 500; font-size: 11px;")
 

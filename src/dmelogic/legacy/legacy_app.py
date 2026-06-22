@@ -7116,8 +7116,15 @@ class SettingsDialog(QDialog):
         self.mouse_wheel_zoom.setChecked(self.settings.get('mouse_wheel_zoom', True))
         self.page_turn_animation.setChecked(self.settings.get('page_turn_animation', False))
         
-        # Scanner settings
-        self.scanner_mode_combo.setCurrentText(self.settings.get('scanner_mode', 'Auto'))
+        # Scanner settings — fall back to File Picker when WIA runtime is absent
+        _saved_scanner_mode = self.settings.get('scanner_mode', 'Auto')
+        try:
+            from dmelogic.scan import _has_wia_runtime
+            if _saved_scanner_mode in ("WIA Only", "Auto") and not _has_wia_runtime():
+                _saved_scanner_mode = "File Picker"
+        except Exception:
+            pass
+        self.scanner_mode_combo.setCurrentText(_saved_scanner_mode)
         scanner_id = self.settings.get('scanner_device_id', '')
         if scanner_id:
             idx = self.scanner_combo.findData(scanner_id)
@@ -11575,7 +11582,11 @@ class PDFViewer(QMainWindow):
             from dmelogic.triage.service import intake_folder_name
             self._new_rx_tab = TriageWidget()
             doc_idx = self.main_tabs.indexOf(doc_tab)
-            self.main_tabs.insertTab(doc_idx, self._new_rx_tab, intake_folder_name())
+            intake_name = (intake_folder_name() or "").strip()
+            self.main_tabs.insertTab(doc_idx, self._new_rx_tab, "New Rx")
+            triage_idx = self.main_tabs.indexOf(self._new_rx_tab)
+            if intake_name and intake_name.lower() != "new rx":
+                self.main_tabs.setTabToolTip(triage_idx, f"Intake folder: {intake_name}")
             self.main_tabs.setTabVisible(self.main_tabs.indexOf(doc_tab), False)
             debug_log(f"[New Rx] triage tab inserted at index {doc_idx}; "
                       f"Document Viewer hidden. tab count={self.main_tabs.count()}")
@@ -11746,59 +11757,59 @@ class PDFViewer(QMainWindow):
         orders_card_layout.addWidget(orders_on_hold_sub)
         stats_layout.addWidget(self.dash_orders_card)
 
-        # Patients With Orders card
-        self.dash_patient_orders_card = QFrame()
-        self.dash_patient_orders_card.setStyleSheet(card_style)
-        self.dash_patient_orders_card.setFixedHeight(220)
-        self.dash_patient_orders_card.setMinimumWidth(220)
-        self.dash_patient_orders_card.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.dash_patient_orders_card.mousePressEvent = lambda e: self._dash_goto_orders()
-        patient_orders_layout = QVBoxLayout(self.dash_patient_orders_card)
-        patient_orders_layout.setSpacing(4)
-        patient_orders_layout.setContentsMargins(10, 12, 10, 12)
-        self.dash_patient_orders_label = QLabel("0")
-        self.dash_patient_orders_label.setStyleSheet("font-size: 36px; font-weight: bold; color: #2563eb;")
-        self.dash_patient_orders_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.dash_patient_orders_label.setMinimumHeight(80)
-        self.dash_patient_orders_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        patient_orders_layout.addWidget(self.dash_patient_orders_label)
-        patient_orders_title = QLabel("Patients With Orders")
-        patient_orders_title.setStyleSheet("font-size: 13px; color: #64748b; font-weight: bold;")
-        patient_orders_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        patient_orders_layout.addWidget(patient_orders_title)
+        # Admin-only billing KPI cards
+        show_admin_billing_kpis = self._can_view_admin_dashboard_billing_kpis()
 
-        patient_orders_sub = QLabel("Seen in recent orders activity")
-        patient_orders_sub.setProperty("typo", "caption")
-        patient_orders_sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        patient_orders_layout.addWidget(patient_orders_sub)
-        stats_layout.addWidget(self.dash_patient_orders_card)
+        if show_admin_billing_kpis:
+            # Billed Amount This Week card
+            self.dash_billed_week_card = QFrame()
+            self.dash_billed_week_card.setStyleSheet(card_style)
+            self.dash_billed_week_card.setFixedHeight(220)
+            self.dash_billed_week_card.setMinimumWidth(220)
+            billed_week_layout = QVBoxLayout(self.dash_billed_week_card)
+            billed_week_layout.setSpacing(4)
+            billed_week_layout.setContentsMargins(10, 12, 10, 12)
+            self.dash_billed_week_label = QLabel("$0.00")
+            self.dash_billed_week_label.setStyleSheet("font-size: 36px; font-weight: bold; color: #16a34a;")
+            self.dash_billed_week_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.dash_billed_week_label.setMinimumHeight(80)
+            self.dash_billed_week_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+            billed_week_layout.addWidget(self.dash_billed_week_label)
+            billed_week_title = QLabel("Epaces")
+            billed_week_title.setStyleSheet("font-size: 13px; color: #64748b; font-weight: bold;")
+            billed_week_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            billed_week_layout.addWidget(billed_week_title)
 
-        # Total Patients card
-        self.dash_patients_card = QFrame()
-        self.dash_patients_card.setStyleSheet(card_style)
-        self.dash_patients_card.setFixedHeight(220)
-        self.dash_patients_card.setMinimumWidth(220)
-        self.dash_patients_card.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.dash_patients_card.mousePressEvent = lambda e: self._dash_goto_patients()
-        patients_card_layout = QVBoxLayout(self.dash_patients_card)
-        patients_card_layout.setSpacing(4)
-        patients_card_layout.setContentsMargins(10, 12, 10, 12)
-        self.dash_patients_label = QLabel("0")
-        self.dash_patients_label.setStyleSheet("font-size: 36px; font-weight: bold; color: #0f172a;")
-        self.dash_patients_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.dash_patients_label.setMinimumHeight(80)
-        self.dash_patients_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        patients_card_layout.addWidget(self.dash_patients_label)
-        patients_card_title = QLabel("Total Patients")
-        patients_card_title.setStyleSheet("font-size: 13px; color: #64748b; font-weight: bold;")
-        patients_card_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        patients_card_layout.addWidget(patients_card_title)
+            billed_week_sub = QLabel("Statuses: Billed, Shipped, Picked Up")
+            billed_week_sub.setProperty("typo", "caption")
+            billed_week_sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            billed_week_layout.addWidget(billed_week_sub)
+            stats_layout.addWidget(self.dash_billed_week_card)
 
-        patients_card_sub = QLabel("All patients in the system")
-        patients_card_sub.setProperty("typo", "caption")
-        patients_card_sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        patients_card_layout.addWidget(patients_card_sub)
-        stats_layout.addWidget(self.dash_patients_card)
+            # Billed Amount This Month card
+            self.dash_billed_month_card = QFrame()
+            self.dash_billed_month_card.setStyleSheet(card_style)
+            self.dash_billed_month_card.setFixedHeight(220)
+            self.dash_billed_month_card.setMinimumWidth(220)
+            billed_month_layout = QVBoxLayout(self.dash_billed_month_card)
+            billed_month_layout.setSpacing(4)
+            billed_month_layout.setContentsMargins(10, 12, 10, 12)
+            self.dash_billed_month_label = QLabel("$0.00")
+            self.dash_billed_month_label.setStyleSheet("font-size: 36px; font-weight: bold; color: #16a34a;")
+            self.dash_billed_month_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.dash_billed_month_label.setMinimumHeight(80)
+            self.dash_billed_month_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+            billed_month_layout.addWidget(self.dash_billed_month_label)
+            billed_month_title = QLabel("Billed Amount This Month")
+            billed_month_title.setStyleSheet("font-size: 13px; color: #64748b; font-weight: bold;")
+            billed_month_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            billed_month_layout.addWidget(billed_month_title)
+
+            billed_month_sub = QLabel("Statuses: Billed, Shipped, Picked Up")
+            billed_month_sub.setProperty("typo", "caption")
+            billed_month_sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            billed_month_layout.addWidget(billed_month_sub)
+            stats_layout.addWidget(self.dash_billed_month_card)
 
         layout.addLayout(stats_layout)
 
@@ -12016,10 +12027,52 @@ class PDFViewer(QMainWindow):
         # Load dashboard data
         self.refresh_dashboard()
 
+    def _can_view_admin_dashboard_billing_kpis(self):
+        """Return True when the current user should see admin billing KPI cards.
+        
+        Checks for:
+        1. Explicit "reports.view_billing" permission
+        2. "users.manage" permission (full admin)
+        3. "Admin" role
+        4. Window title containing "(admin" or ", admin"
+        """
+        try:
+            from dmelogic.security.permissions import has_permission
+            # Check for dedicated billing reports permission first (most flexible)
+            if has_permission("reports.view_billing"):
+                return True
+            # Check for full admin permission
+            if has_permission("users.manage"):
+                return True
+        except Exception:
+            pass
+
+        try:
+            from dmelogic.security.auth import get_session
+            from dmelogic.db.users import get_user_roles
+            session = get_session()
+            if getattr(session, "is_authenticated", False) and getattr(session, "user_id", None):
+                roles = get_user_roles(session.user_id, getattr(session, "_folder_path", None))
+                if any(str(r).strip().lower() == "admin" for r in (roles or [])):
+                    return True
+        except Exception:
+            pass
+
+        # Fallback for legacy runtime wiring where role appears in the title.
+        try:
+            title = (self.windowTitle() or "").lower()
+            if "(admin" in title or ", admin" in title:
+                return True
+        except Exception:
+            pass
+
+        return False
+
     def refresh_dashboard(self):
         """Refresh all dashboard widgets with current data."""
         try:
-            conn = sqlite3.connect(self.orders_database_file)
+            orders_db_path = getattr(self, "orders_db_path", None) or self.orders_database_file
+            conn = sqlite3.connect(orders_db_path)
             cur = conn.cursor()
             orders_columns = self._get_orders_table_columns(cur)
             has_deleted_at = "deleted_at" in orders_columns
@@ -12030,23 +12083,55 @@ class PDFViewer(QMainWindow):
             month_start = datetime.now().replace(day=1).strftime('%Y-%m-%d')
             week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
             week_start = (datetime.now() - timedelta(days=datetime.now().weekday())).strftime('%Y-%m-%d')
+            # Billing week runs Thursday through Wednesday.
+            billing_week_start = (
+                datetime.now() - timedelta(days=(datetime.now().weekday() - 3) % 7)
+            ).strftime('%Y-%m-%d')
 
-            orders_columns = self._get_orders_table_columns(cur)
-            date_column = "created_date" if "created_date" in orders_columns else "order_date"
-            has_deleted_at = "deleted_at" in orders_columns
+            # Normalize mixed date formats (YYYY-MM-DD, MM/DD/YYYY, MM-DD-YYYY)
+            # so dashboard counts match Orders/Reports date logic.
+            normalized_order_or_rx_date = (
+                "CASE "
+                "WHEN instr(COALESCE(NULLIF(order_date,''), rx_date),'/')>0 "
+                "THEN substr(COALESCE(NULLIF(order_date,''), rx_date),7,4)||'-'||substr(COALESCE(NULLIF(order_date,''), rx_date),1,2)||'-'||substr(COALESCE(NULLIF(order_date,''), rx_date),4,2) "
+                "WHEN length(COALESCE(NULLIF(order_date,''), rx_date))=10 "
+                "  AND substr(COALESCE(NULLIF(order_date,''), rx_date),3,1)='-' "
+                "  AND substr(COALESCE(NULLIF(order_date,''), rx_date),6,1)='-' "
+                "THEN substr(COALESCE(NULLIF(order_date,''), rx_date),7,4)||'-'||substr(COALESCE(NULLIF(order_date,''), rx_date),1,2)||'-'||substr(COALESCE(NULLIF(order_date,''), rx_date),4,2) "
+                "ELSE COALESCE(NULLIF(order_date,''), rx_date) END"
+            )
+            normalized_order_or_rx_date_alias = (
+                "CASE "
+                "WHEN instr(COALESCE(NULLIF(o.order_date,''), o.rx_date),'/')>0 "
+                "THEN substr(COALESCE(NULLIF(o.order_date,''), o.rx_date),7,4)||'-'||substr(COALESCE(NULLIF(o.order_date,''), o.rx_date),1,2)||'-'||substr(COALESCE(NULLIF(o.order_date,''), o.rx_date),4,2) "
+                "WHEN length(COALESCE(NULLIF(o.order_date,''), o.rx_date))=10 "
+                "  AND substr(COALESCE(NULLIF(o.order_date,''), o.rx_date),3,1)='-' "
+                "  AND substr(COALESCE(NULLIF(o.order_date,''), o.rx_date),6,1)='-' "
+                "THEN substr(COALESCE(NULLIF(o.order_date,''), o.rx_date),7,4)||'-'||substr(COALESCE(NULLIF(o.order_date,''), o.rx_date),1,2)||'-'||substr(COALESCE(NULLIF(o.order_date,''), o.rx_date),4,2) "
+                "ELSE COALESCE(NULLIF(o.order_date,''), o.rx_date) END"
+            )
+            if "created_date" in orders_columns:
+                used_date_expr = (
+                    f"COALESCE(NULLIF(substr(created_date,1,10),''), {normalized_order_or_rx_date})"
+                )
+                used_date_expr_alias = (
+                    f"COALESCE(NULLIF(substr(o.created_date,1,10),''), {normalized_order_or_rx_date_alias})"
+                )
+            else:
+                used_date_expr = normalized_order_or_rx_date
+                used_date_expr_alias = normalized_order_or_rx_date_alias
 
             # Count orders that are truly On Hold (do not include Unbilled)
             cur.execute("""
                 SELECT COUNT(*) FROM orders 
-                WHERE order_status = 'On Hold'
-            """)
+                WHERE order_status = 'On Hold'""" + deleted_clause)
             on_hold_count = cur.fetchone()[0] or 0
             self.dash_unbilled_label.setText(str(on_hold_count))
 
             # Count orders created this week
             cur.execute(f"""
                 SELECT COUNT(*) FROM orders
-                WHERE {date_column} >= ?
+                WHERE {used_date_expr} >= ?{deleted_clause}
             """, (week_start,))
             orders_week_count = cur.fetchone()[0] or 0
             self.dash_orders_week_label.setText(str(orders_week_count))
@@ -12054,38 +12139,47 @@ class PDFViewer(QMainWindow):
             # Count orders this month
             cur.execute(f"""
                 SELECT COUNT(*) FROM orders 
-                WHERE {date_column} >= ?
+                WHERE {used_date_expr} >= ?{deleted_clause}
             """, (month_start,))
             orders_month = cur.fetchone()[0] or 0
             self.dash_orders_month_label.setText(str(orders_month))
 
-            # Count patients with at least one order
-            deleted_filter = "WHERE deleted_at IS NULL" if has_deleted_at else ""
-            cur.execute(f"""
-                SELECT COUNT(DISTINCT 
-                    CASE 
-                        WHEN patient_id IS NOT NULL THEN 'ID:' || patient_id
-                        ELSE 'NAME:' || COALESCE(TRIM(patient_last_name), '') || '|' || COALESCE(TRIM(patient_first_name), '')
-                    END
+            if hasattr(self, "dash_billed_week_label") and hasattr(self, "dash_billed_month_label"):
+                billed_status_clause = "LOWER(COALESCE(o.order_status,'')) IN ('billed','shipped','picked up')"
+                billed_amount_expr = (
+                    "COALESCE(SUM(CASE "
+                    "WHEN COALESCE(NULLIF(oi.total,''), '') <> '' THEN CAST(oi.total AS REAL) "
+                    "ELSE CAST(COALESCE(NULLIF(oi.qty,''), '0') AS REAL) * CAST(COALESCE(NULLIF(oi.cost_ea,''), '0') AS REAL) "
+                    "END), 0)"
                 )
-                FROM orders
-                {deleted_filter}
-            """)
-            patient_orders_count = cur.fetchone()[0] or 0
-            self.dash_patient_orders_label.setText(str(patient_orders_count))
+
+                cur.execute(
+                    f"""
+                    SELECT {billed_amount_expr}
+                    FROM orders o
+                    LEFT JOIN order_items oi ON oi.order_id = o.id
+                    WHERE {billed_status_clause}
+                      AND {used_date_expr_alias} >= ?{deleted_clause_alias}
+                    """,
+                                        (billing_week_start,),
+                )
+                billed_week_total = float(cur.fetchone()[0] or 0.0)
+                self.dash_billed_week_label.setText(f"${billed_week_total:,.2f}")
+
+                cur.execute(
+                    f"""
+                    SELECT {billed_amount_expr}
+                    FROM orders o
+                    LEFT JOIN order_items oi ON oi.order_id = o.id
+                    WHERE {billed_status_clause}
+                      AND {used_date_expr_alias} >= ?{deleted_clause_alias}
+                    """,
+                    (month_start,),
+                )
+                billed_month_total = float(cur.fetchone()[0] or 0.0)
+                self.dash_billed_month_label.setText(f"${billed_month_total:,.2f}")
 
             conn.close()
-
-            # Count total patients
-            try:
-                conn_p = sqlite3.connect(self.patient_database_file)
-                cur_p = conn_p.cursor()
-                cur_p.execute("SELECT COUNT(*) FROM patients")
-                patients_count = cur_p.fetchone()[0] or 0
-                self.dash_patients_label.setText(str(patients_count))
-                conn_p.close()
-            except:
-                self.dash_patients_label.setText("--")
 
             # Load tasks due today
             self._load_dash_tasks_today()
@@ -14150,9 +14244,10 @@ class PDFViewer(QMainWindow):
                 initial_file=initial_file,
                 recipient_name=recipient_name
             )
-            dialog.exec()
+            return dialog.exec()
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Could not open Fax dialog: {e}")
+            return None
     
     def _offer_fax_send(self, title, out_path, prescriber_name, prescriber_npi,
                         first_name, last_name, patient_dob,
@@ -14504,7 +14599,7 @@ class PDFViewer(QMainWindow):
             self._message_notifier.new_fax_received.connect(self._on_new_fax)
             
             # Set up system tray (use app icon if available)
-            icon_path = os.path.join(os.path.dirname(__file__), 'assets', 'DMELogic Icon.ico')
+            icon_path = os.path.join(os.path.dirname(__file__), 'assets', 'Nova Icon.ico')
             self._message_notifier.setup_tray_icon(icon_path)
             
             # Start polling
@@ -17405,10 +17500,6 @@ class PDFViewer(QMainWindow):
                 except (KeyError, IndexError):
                     patient_dob = None
                 status = order["order_status"]
-                # Disabled/archived workflow: keep these in patient history,
-                # but hide from the active Orders screen.
-                if (status or "").strip().lower() == "cancelled":
-                    continue
                 try:
                     if order["deleted_at"]:
                         continue
@@ -20088,7 +20179,8 @@ class PDFViewer(QMainWindow):
         """Load settings from JSON file."""
         try:
             if os.path.exists(SETTINGS_FILE):
-                with open(SETTINGS_FILE, 'r') as f:
+                # Use utf-8-sig so files with BOM still parse correctly.
+                with open(SETTINGS_FILE, 'r', encoding='utf-8-sig') as f:
                     settings = json.load(f)
                     if 'quick_folders' not in settings:
                         settings['quick_folders'] = []
@@ -20123,7 +20215,7 @@ class PDFViewer(QMainWindow):
     def save_settings(self):
         """Save settings to JSON file."""
         try:
-            with open(SETTINGS_FILE, 'w') as f:
+            with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
                 json.dump(self.settings, f, indent=2)
         except Exception as e:
             print(f"Error saving settings: {e}")
@@ -23620,6 +23712,11 @@ class PDFViewer(QMainWindow):
         more_info_action.setToolTip('Generate a fax requesting additional patient information or prior approval from prescriber')
         more_info_action.triggered.connect(self.create_more_info_needed_fax)
         tools_menu.addAction(more_info_action)
+
+        rx_sent_to_plan_action = QAction('📨 RX Sent to Plan/MLTC…', self)
+        rx_sent_to_plan_action.setToolTip('Generate a fax to a Plan/MLTC notifying them of attached Rx and member DME needs')
+        rx_sent_to_plan_action.triggered.connect(self.create_rx_sent_to_plan_fax)
+        tools_menu.addAction(rx_sent_to_plan_action)
         
         # Expose Quick Delivery Ticket here as well for convenience
         quick_ticket_tools_action = QAction('Quick Delivery Ticket…', self)
@@ -26029,7 +26126,7 @@ class PDFViewer(QMainWindow):
         
         print(f"✅ Ready to add new patient. Pre-filled from search: '{search_text}'")
 
-    def open_quick_add_patient_dialog(self):
+    def open_quick_add_patient_dialog(self, prefill=None, initial_name=""):
         """Add a patient when the legacy patient form isn't present (new Patients grid)."""
         # Stop auto-refresh timer while dialog is open to prevent interference
         if hasattr(self, 'auto_refresh_timer'):
@@ -26172,6 +26269,54 @@ class PDFViewer(QMainWindow):
         notes_row = len(row_pairs)
         form.addWidget(QLabel("Notes"), notes_row, 0)
         form.addWidget(notes, notes_row, 1, 1, 3)
+
+        # Optional prefill from triage/OCR so staff only completes missing fields.
+        try:
+            def _set_field(key, value):
+                val = str(value or "").strip()
+                if not val:
+                    return
+                widget = fields.get(key)
+                if widget is None:
+                    return
+                if isinstance(widget, QComboBox):
+                    widget.setEditText(val)
+                else:
+                    widget.setText(val)
+
+            def _split_name(name_text):
+                raw = str(name_text or "").strip()
+                if not raw:
+                    return "", ""
+                if "," in raw:
+                    left, right = raw.split(",", 1)
+                    return left.strip(), right.strip()
+                parts = raw.split()
+                if len(parts) >= 2:
+                    return parts[-1].strip(), " ".join(parts[:-1]).strip()
+                return raw, ""
+
+            resolved_prefill = dict(prefill or {})
+            name_hint = str(initial_name or "").strip()
+            if not name_hint and hasattr(self, "patient_search") and self.patient_search is not None:
+                name_hint = self.patient_search.text().strip()
+
+            if name_hint and (not resolved_prefill.get("last_name") or not resolved_prefill.get("first_name")):
+                ln, fn = _split_name(name_hint)
+                if ln and not resolved_prefill.get("last_name"):
+                    resolved_prefill["last_name"] = ln
+                if fn and not resolved_prefill.get("first_name"):
+                    resolved_prefill["first_name"] = fn
+
+            # Apply the most useful demographic fields first.
+            for k in ("last_name", "first_name", "dob", "gender", "phone", "secondary_contact",
+                      "email", "address", "city", "state", "zip"):
+                val = resolved_prefill.get(k)
+                if k in ("last_name", "first_name") and val:
+                    val = str(val).upper()
+                _set_field(k, val)
+        except Exception:
+            pass
         
         scroll.setWidget(scroll_widget)
         main_layout.addWidget(scroll)
@@ -26456,7 +26601,7 @@ class PDFViewer(QMainWindow):
             orders: list[tuple] = []
 
             if patient_id:
-                # Preferred: Use patient_id for reliable linkage
+                # Preferred source: patient_id linkage.
                 print(f"Using patient_id: {patient_id} for order query")
                 cursor.execute(
                     """
@@ -26467,17 +26612,27 @@ class PDFViewer(QMainWindow):
                     """,
                     (patient_id,),
                 )
-                orders = cursor.fetchall()
+                pid_orders = cursor.fetchall()
 
-                # IMPORTANT: if no rows found for this patient_id (older orders),
-                # fall back to name + DOB matching so history is not blank.
-                if not orders:
-                    print(
-                        "No orders found by patient_id; falling back to name + DOB matching"
-                    )
-                    orders = query_by_name_and_dob()
+                # Also include legacy rows matched by demographics; many older
+                # refill rows were created without patient_id linkage.
+                name_orders = query_by_name_and_dob()
+
+                seen_ids = set()
+                merged_orders = []
+                for row in pid_orders + name_orders:
+                    try:
+                        oid = int(row[0])
+                    except Exception:
+                        continue
+                    if oid in seen_ids:
+                        continue
+                    seen_ids.add(oid)
+                    merged_orders.append(row)
+
+                orders = merged_orders
             else:
-                # No patient_id available → legacy name + DOB logic
+                # No patient_id available -> legacy name + DOB logic.
                 orders = query_by_name_and_dob()
 
             print(f"Found {len(orders)} orders for patient {last_name}, {first_name}")
@@ -28153,6 +28308,523 @@ class PDFViewer(QMainWindow):
         except Exception as e:
             import traceback; traceback.print_exc()
             QMessageBox.critical(self, 'More Info Fax', f'Failed to generate fax: {e}')
+
+    def create_rx_sent_to_plan_fax(self):
+        """Generate a fax to a Plan/MLTC with attached Rx and member demographics."""
+        from PyQt6.QtWidgets import (
+            QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+            QLineEdit, QFileDialog, QListWidget, QAbstractItemView, QFrame, QInputDialog,
+        )
+        try:
+            # Require a selected patient
+            current_row = self.patients_table.currentRow()
+            if current_row < 0:
+                QMessageBox.information(self, 'RX Sent to Plan/MLTC',
+                                        'Please select a patient from the Patients tab first.')
+                return
+
+            last_name_item  = self.patients_table.item(current_row, 0)
+            first_name_item = self.patients_table.item(current_row, 1)
+            dob_item        = self.patients_table.item(current_row, 2)
+            if not last_name_item or not first_name_item or not dob_item:
+                QMessageBox.warning(self, 'RX Sent to Plan/MLTC', 'Could not read patient information.')
+                return
+
+            last_name  = last_name_item.text().strip()
+            first_name = first_name_item.text().strip()
+            dob_raw    = dob_item.text().strip()
+
+            # Determine destination plan from patient profile.
+            primary_plan = (self.patients_table.item(current_row, 8).text().strip()
+                            if self.patients_table.item(current_row, 8) else "")
+            secondary_plan = (self.patients_table.item(current_row, 10).text().strip()
+                              if self.patients_table.item(current_row, 10) else "")
+            plan_choices = []
+            for p in (primary_plan, secondary_plan):
+                if p and p not in plan_choices:
+                    plan_choices.append(p)
+
+            selected_plan = "Plan/MLTC"
+            if len(plan_choices) == 1:
+                selected_plan = plan_choices[0]
+            elif len(plan_choices) > 1:
+                selected_plan, ok = QInputDialog.getItem(
+                    self,
+                    "Select Plan",
+                    "This patient has multiple plans. Which plan should this fax be addressed to?",
+                    plan_choices,
+                    0,
+                    False,
+                )
+                if not ok:
+                    return
+
+            def _lookup_plan_fax(plan_name: str) -> str:
+                if not plan_name:
+                    return ""
+                try:
+                    conn_i = sqlite3.connect(self.insurance_database_file)
+                    cur_i = conn_i.cursor()
+                    cur_i.execute("PRAGMA table_info(insurance_names)")
+                    cols = [str(r[1]).lower() for r in cur_i.fetchall()]
+                    fax_col = None
+                    for candidate in ("fax", "fax_number", "plan_fax", "contact_fax"):
+                        if candidate in cols:
+                            fax_col = candidate
+                            break
+                    if not fax_col:
+                        conn_i.close()
+                        return ""
+                    cur_i.execute(
+                        f"SELECT COALESCE({fax_col}, '') FROM insurance_names WHERE UPPER(TRIM(name)) = UPPER(TRIM(?)) LIMIT 1",
+                        (plan_name,),
+                    )
+                    row_i = cur_i.fetchone()
+                    conn_i.close()
+                    return (row_i[0] or "").strip() if row_i else ""
+                except Exception:
+                    return ""
+
+            plan_fax = _lookup_plan_fax(selected_plan)
+
+            # Pull full demographics from patient DB
+            conn = sqlite3.connect(self.patient_database_file)
+            cur  = conn.cursor()
+
+            # Member-ID column varies across patient DB versions.
+            member_col = None
+            try:
+                cur.execute("PRAGMA table_info(patients)")
+                cols = {str(r[1]).lower() for r in cur.fetchall()}
+                for candidate in ("insurance_id", "policy_num", "member_id", "primary_policy_number", "policy_number"):
+                    if candidate in cols:
+                        member_col = candidate
+                        break
+            except Exception:
+                member_col = None
+
+            member_expr = f"COALESCE({member_col}, '') AS member_id_value" if member_col else "'' AS member_id_value"
+            cur.execute("""
+                SELECT dob, address, phone, city, state, zip, {member_expr}
+                FROM patients
+                WHERE last_name = ? AND first_name = ? AND dob = ?
+                LIMIT 1
+            """.format(member_expr=member_expr), (last_name, first_name, dob_raw))
+            row = cur.fetchone()
+            if not row:
+                cur.execute("""
+                    SELECT dob, address, phone, city, state, zip, {member_expr}
+                    FROM patients
+                    WHERE UPPER(TRIM(last_name))=UPPER(TRIM(?))
+                      AND UPPER(TRIM(first_name))=UPPER(TRIM(?))
+                    ORDER BY id DESC LIMIT 1
+                """.format(member_expr=member_expr), (last_name, first_name))
+                row = cur.fetchone()
+            conn.close()
+
+            patient_dob      = row[0] if row else dob_raw
+            patient_address  = row[1] if row else ''
+            patient_phone    = row[2] if row else ''
+            patient_city     = row[3] if row else ''
+            patient_state    = row[4] if row else ''
+            patient_zip      = row[5] if row else ''
+            insurance_id     = row[6] if row and len(row) > 6 else ''
+
+            dob_formatted = self.format_date_display(patient_dob) if patient_dob else dob_raw
+            city_state_zip = ', '.join(filter(None, [patient_city, patient_state, patient_zip]))
+            full_address = patient_address or city_state_zip or ''
+
+            # ── Helper dialog ─────────────────────────────────────────────────
+            dialog = QDialog(self)
+            dialog.setWindowTitle('RX Sent to Plan/MLTC')
+            dialog.setMinimumWidth(640)
+            layout = QVBoxLayout(dialog)
+            layout.setSpacing(10)
+
+            # Patient info card (read-only display)
+            card = QFrame()
+            card.setFrameShape(QFrame.Shape.StyledPanel)
+            card.setStyleSheet('background:#f5f5f5; border-radius:4px; padding:6px;')
+            card_layout = QVBoxLayout(card)
+            card_layout.setSpacing(2)
+            card_layout.addWidget(QLabel(f'<b>Member:</b> {first_name.upper()} {last_name.upper()}'))
+            card_layout.addWidget(QLabel(f'<b>DOB:</b> {dob_formatted}'))
+            card_layout.addWidget(QLabel(f'<b>Address:</b> {full_address}'))
+            card_layout.addWidget(QLabel(f'<b>Tel:</b> {patient_phone or "—"}'))
+            card_layout.addWidget(QLabel(f'<b>Member ID:</b> {insurance_id or "—"}'))
+            card_layout.addWidget(QLabel(f'<b>Plan:</b> {selected_plan or "Plan/MLTC"}'))
+            layout.addWidget(card)
+
+            # Editable Member ID override
+            id_row = QHBoxLayout()
+            id_row.addWidget(QLabel('Member ID (override if needed):'))
+            id_input = QLineEdit(insurance_id or '')
+            id_row.addWidget(id_input)
+            layout.addLayout(id_row)
+
+            # Fax number field
+            fax_row = QHBoxLayout()
+            fax_row.addWidget(QLabel('Fax to (Plan/MLTC fax number):'))
+            fax_input = QLineEdit()
+            fax_input.setPlaceholderText('e.g. 718-555-0100')
+            if plan_fax:
+                fax_input.setText(plan_fax)
+            fax_row.addWidget(fax_input)
+            layout.addLayout(fax_row)
+
+            # Rx file attachments
+            layout.addWidget(QLabel('<b>Attach Rx file(s) to include with fax:</b>'))
+            rx_list = QListWidget()
+            rx_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+            rx_list.setMinimumHeight(90)
+            layout.addWidget(rx_list)
+
+            att_row = QHBoxLayout()
+            add_rx_btn = QPushButton('📎 Add Rx File(s)…')
+            remove_rx_btn = QPushButton('Remove Selected')
+
+            def add_rx_files():
+                try:
+                    from dmelogic.paths import ocr_folder
+                    letter = (last_name[:1] or "#").upper()
+                    start_dir = str((ocr_folder() / letter) if (ocr_folder() / letter).exists() else ocr_folder())
+                except Exception:
+                    start_dir = ''
+                files, _ = QFileDialog.getOpenFileNames(
+                    dialog, 'Select Rx File(s)', start_dir,
+                    'Documents (*.pdf *.jpg *.jpeg *.png *.tif *.tiff)'
+                )
+                for f in files:
+                    if f and f not in [rx_list.item(i).text() for i in range(rx_list.count())]:
+                        rx_list.addItem(f)
+
+            def remove_rx_files():
+                for item in rx_list.selectedItems():
+                    rx_list.takeItem(rx_list.row(item))
+
+            add_rx_btn.clicked.connect(add_rx_files)
+            remove_rx_btn.clicked.connect(remove_rx_files)
+            att_row.addWidget(add_rx_btn)
+            att_row.addWidget(remove_rx_btn)
+            att_row.addStretch()
+            layout.addLayout(att_row)
+
+            # Buttons
+            btn_row = QHBoxLayout()
+            btn_row.addStretch()
+            cancel_btn = QPushButton('Cancel')
+            cancel_btn.clicked.connect(dialog.reject)
+            btn_row.addWidget(cancel_btn)
+            generate_btn = QPushButton('Generate Fax')
+            generate_btn.setStyleSheet(
+                'QPushButton{background:#0078D4;color:white;padding:7px 18px;font-weight:bold;}')
+            generate_btn.clicked.connect(dialog.accept)
+            btn_row.addWidget(generate_btn)
+            layout.addLayout(btn_row)
+
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+
+            fax_number  = fax_input.text().strip()
+            member_id   = id_input.text().strip() or insurance_id or ''
+            rx_files    = [rx_list.item(i).text() for i in range(rx_list.count())]
+
+            if not fax_number:
+                QMessageBox.warning(self, 'RX Sent to Plan/MLTC',
+                                    'Please enter a fax number for the Plan/MLTC.')
+                return
+
+            # ── PDF generation ────────────────────────────────────────────────
+            import tempfile, os
+            from reportlab.lib.pagesizes import letter
+            from reportlab.pdfgen import canvas as rl_canvas
+            from reportlab.lib.units import inch
+            from datetime import datetime
+
+            timestamp  = datetime.now().strftime('%Y%m%d_%H%M%S')
+            tmp_dir    = tempfile.gettempdir()
+            cover_path = os.path.join(tmp_dir, f'RxToPlan_Cover_{timestamp}.pdf')
+            c = rl_canvas.Canvas(cover_path, pagesize=letter)
+            width, height = letter
+            y = height - 0.5*inch
+            logo_bottom = y - 0.75*inch
+
+            # Logo
+            logo_path = r'C:\FAX_MANAGER_PRO\assets\logo.jpg'
+            try:
+                if os.path.exists(logo_path):
+                    c.drawImage(logo_path, 0.5*inch, y - 0.75*inch,
+                                width=1.8*inch, height=0.75*inch,
+                                preserveAspectRatio=True, mask='auto')
+            except Exception:
+                pass
+
+            # Company header (right-aligned)
+            c.setFont('Helvetica-Bold', 12)
+            c.drawRightString(width - 0.5*inch, y - 0.05*inch, '1st Aid Pharmacy & Surgical Supplies')
+            y -= 0.25*inch
+            c.setFont('Helvetica', 10)
+            c.drawRightString(width - 0.5*inch, y, '23 W. Fordham Road, Bronx, NY 10468')
+            y -= 0.15*inch
+            c.drawRightString(width - 0.5*inch, y, 'DME Tel: 347-647-2347  |  DME Fax: 347-947-8102')
+            y -= 0.3*inch
+            # Keep divider below the logo block to avoid crossing image pixels.
+            y = min(y, logo_bottom - 0.10*inch)
+            c.setLineWidth(1)
+            c.line(0.5*inch, y, width - 0.5*inch, y)
+            y -= 0.3*inch
+
+            # TO / FROM
+            label_x = 0.5*inch
+            value_x = 1.25*inch
+            c.setFont('Helvetica-Bold', 10)
+            c.drawString(label_x, y, 'TO:')
+            c.setFont('Helvetica', 10)
+            c.drawString(value_x, y, f'{selected_plan or "Plan/MLTC"}  |  Fax: {fax_number}')
+            y -= 0.25*inch
+            c.setFont('Helvetica-Bold', 10)
+            c.drawString(label_x, y, 'FROM:')
+            c.setFont('Helvetica', 10)
+            c.drawString(value_x, y, 'Melvin Ramirez, DME Operations Manager')
+            y -= 0.15*inch
+            c.setFont('Helvetica', 9)
+            c.drawString(value_x, y, '1st Aid Pharmacy & Surgical Supplies — DME Division')
+            y -= 0.28*inch
+            c.setLineWidth(0.5)
+            c.line(0.5*inch, y, width - 0.5*inch, y)
+            y -= 0.3*inch
+
+            # Body letter
+            member_name = f'{first_name.upper()} {last_name.upper()}'
+            c.setFont('Helvetica-Bold', 13)
+            c.drawString(0.5*inch, y, f'Re: DME Vendor Assignment — {member_name}')
+            y -= 0.35*inch
+
+            c.setFont('Helvetica', 10)
+            c.drawString(0.5*inch, y, 'Hello,')
+            y -= 0.22*inch
+            body_lines = [
+                'Your member needs assistance with the DME items listed on the prescription(s)',
+                'enclosed and needs to be assigned a participating vendor.',
+                'The member was given your contact number to follow-up.',
+            ]
+            for ln in body_lines:
+                c.drawString(0.5*inch, y, ln)
+                y -= 0.18*inch
+
+            # Member demographics box
+            y -= 0.18*inch
+            c.setLineWidth(0.5)
+            box_top = y + 0.14*inch
+            demo_lines = [
+                ('Member Name:', member_name),
+                ('Address:', full_address or 'N/A'),
+                ('DOB:', dob_formatted),
+                ('Member ID:', member_id or 'N/A'),
+                ('Tel:', patient_phone or 'N/A'),
+            ]
+            box_bottom = box_top - 0.20*inch - (len(demo_lines) * 0.22*inch)
+            c.setFillColorRGB(0.97, 0.97, 0.97)
+            c.rect(0.5*inch, box_bottom, width - 1.0*inch, box_top - box_bottom, fill=1, stroke=1)
+            c.setFillColorRGB(0, 0, 0)
+            from reportlab.pdfbase.pdfmetrics import stringWidth as sw
+            label_x = 0.65*inch
+            label_w = max(sw(lbl, 'Helvetica-Bold', 10) for lbl, _ in demo_lines)
+            value_x = label_x + label_w + 0.18*inch
+            y = box_top - 0.20*inch
+            for label, value in demo_lines:
+                c.setFont('Helvetica-Bold', 10)
+                c.drawString(label_x, y, label)
+                c.setFont('Helvetica', 10)
+                c.drawString(value_x, y, value)
+                y -= 0.22*inch
+
+            y = box_bottom - 0.3*inch
+            c.setFont('Helvetica-Bold', 11)
+            c.drawString(0.5*inch, y, 'SEE ATTACHED PRESCRIPTION(S)')
+            y -= 0.35*inch
+            c.setLineWidth(0.5)
+            c.line(0.5*inch, y, width - 0.5*inch, y)
+            y -= 0.22*inch
+            c.setFont('Helvetica', 10)
+            c.drawString(0.5*inch, y, 'Thank you,')
+            y -= 0.18*inch
+            c.setFont('Helvetica-Bold', 10)
+            c.drawString(0.5*inch, y, 'DME Team — 1st Aid Pharmacy & Surgical Supplies')
+
+            c.save()
+
+            # Merge cover + attached Rx PDFs
+            pages_to_merge = [cover_path]
+            for rf in rx_files:
+                if rf.lower().endswith('.pdf'):
+                    pages_to_merge.append(rf)
+                else:
+                    # Convert image to single-page PDF
+                    try:
+                        from reportlab.lib.pagesizes import letter as ltr
+                        img_pdf = os.path.join(tmp_dir, f'rx_img_{timestamp}_{len(pages_to_merge)}.pdf')
+                        ic = rl_canvas.Canvas(img_pdf, pagesize=ltr)
+                        iw, ih = ltr
+                        ic.drawImage(rf, 0.5*inch, 0.5*inch,
+                                     width=iw - inch, height=ih - inch,
+                                     preserveAspectRatio=True, mask='auto')
+                        ic.save()
+                        pages_to_merge.append(img_pdf)
+                    except Exception:
+                        pass  # skip unreadable images
+
+            try:
+                from PyPDF2 import PdfMerger
+                merger = PdfMerger()
+                for p in pages_to_merge:
+                    merger.append(p)
+                out_name = f'RxToPlan_{last_name.replace(" ","_")}_{timestamp}.pdf'
+                from pathlib import Path
+                downloads = str(Path.home() / 'Downloads')
+                out_path = os.path.join(downloads if os.path.exists(downloads) else os.getcwd(), out_name)
+                merger.write(out_path)
+                merger.close()
+            except Exception:
+                # Fallback: just use cover if merge fails
+                import shutil
+                out_name = f'RxToPlan_{last_name.replace(" ","_")}_{timestamp}.pdf'
+                from pathlib import Path
+                downloads = str(Path.home() / 'Downloads')
+                out_path = os.path.join(downloads if os.path.exists(downloads) else os.getcwd(), out_name)
+                shutil.copy(cover_path, out_path)
+
+            # Auto-attach to patient documents
+            try:
+                self._auto_attach_fax_to_patient(
+                    first_name, last_name, patient_dob, out_path,
+                    f'RX Sent to Plan/MLTC — {datetime.now().strftime("%Y-%m-%d")}')
+            except Exception:
+                pass
+
+            try:
+                os.startfile(out_path)
+            except Exception:
+                pass
+
+            # Open RingCentral fax flow immediately (no extra prompt).
+            fax_dialog_result = None
+            patient_name = f'{first_name} {last_name}'.strip()
+            p_id = None
+            try:
+                try:
+                    p_conn = sqlite3.connect(self.patient_database_file)
+                    p_cur = p_conn.cursor()
+                    p_cur.execute(
+                        "SELECT id FROM patients WHERE first_name = ? AND last_name = ? AND dob = ? LIMIT 1",
+                        (first_name, last_name, patient_dob)
+                    )
+                    p_row = p_cur.fetchone()
+                    p_conn.close()
+                    if p_row:
+                        p_id = p_row[0]
+                except Exception:
+                    p_id = None
+
+                username = "Unknown"
+                if hasattr(self, 'auth_system') and hasattr(self.auth_system, 'current_user'):
+                    username = self.auth_system.current_user or "Unknown"
+
+                fax_dialog_result = self._open_fax_dialog(
+                    p_id,
+                    fax_number,
+                    patient_name,
+                    username,
+                    initial_file=out_path,
+                    recipient_name=selected_plan or "Plan/MLTC"
+                )
+            except Exception:
+                pass
+
+            # Auto-create detailed tracking note for this action.
+            try:
+                from dmelogic.db import sticky_notes as notes_db
+                from pathlib import Path
+                from PyQt6.QtWidgets import QDialog
+
+                if p_id is None:
+                    try:
+                        p_conn = sqlite3.connect(self.patient_database_file)
+                        p_cur = p_conn.cursor()
+                        p_cur.execute(
+                            "SELECT id FROM patients WHERE UPPER(TRIM(first_name)) = UPPER(TRIM(?)) AND UPPER(TRIM(last_name)) = UPPER(TRIM(?)) ORDER BY id DESC LIMIT 1",
+                            (first_name, last_name)
+                        )
+                        p_row = p_cur.fetchone()
+                        p_conn.close()
+                        if p_row:
+                            p_id = p_row[0]
+                    except Exception:
+                        p_id = None
+
+                send_status = "RingCentral dialog opened"
+                if fax_dialog_result == QDialog.DialogCode.Accepted:
+                    send_status = "RingCentral fax queued"
+                elif fax_dialog_result == QDialog.DialogCode.Rejected:
+                    send_status = "RingCentral send canceled"
+
+                attachment_names = [Path(p).name for p in (rx_files or []) if p]
+                attachment_text = ", ".join(attachment_names) if attachment_names else "None"
+                action_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                tracking_title = "RX Tracking - Sent to Plan/MLTC"
+                tracking_body = (
+                    f"[RX Tracking] {action_ts}\n"
+                    f"Action: RX sent to plan fax workflow\n"
+                    f"Patient: {patient_name}\n"
+                    f"Plan: {selected_plan or 'Plan/MLTC'}\n"
+                    f"Fax Number: {fax_number}\n"
+                    f"Member ID: {member_id or 'N/A'}\n"
+                    f"Generated Packet: {out_path}\n"
+                    f"Attached RX Files ({len(attachment_names)}): {attachment_text}\n"
+                    f"Result: {send_status}"
+                )
+
+                if p_id:
+                    note_id = notes_db.create_note(
+                        title=tracking_title,
+                        body=tracking_body,
+                        color="#E8F5E9",
+                        pinned=False,
+                        folder_path=getattr(self, "folder_path", None),
+                    )
+                    notes_db.set_note_links(
+                        int(note_id),
+                        [("patient", int(p_id))],
+                        folder_path=getattr(self, "folder_path", None),
+                    )
+
+                    # Also append to patient chart notes so Notes tab has the same audit trail.
+                    try:
+                        n_conn = sqlite3.connect(self.patient_database_file)
+                        n_cur = n_conn.cursor()
+                        n_cur.execute("SELECT notes FROM patients WHERE id = ?", (int(p_id),))
+                        existing_notes_row = n_cur.fetchone()
+                        existing_notes = existing_notes_row[0] if existing_notes_row and existing_notes_row[0] else ""
+                        chart_entry = (
+                            f"[RX Tracking] {action_ts} | Sent to {selected_plan or 'Plan/MLTC'}"
+                            f" | Fax: {fax_number} | Result: {send_status}"
+                        )
+                        updated_notes = f"{existing_notes}\n\n{chart_entry}".strip() if existing_notes else chart_entry
+                        n_cur.execute("UPDATE patients SET notes = ? WHERE id = ?", (updated_notes, int(p_id)))
+                        n_conn.commit()
+                        n_conn.close()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            QMessageBox.information(self, 'RX Sent to Plan/MLTC',
+                                    f'Fax packet saved to:\n{out_path}')
+
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            QMessageBox.critical(self, 'RX Sent to Plan/MLTC', f'Failed: {e}')
 
     def create_missing_diagnosis_fax(self):
         """Generate a fax requesting valid diagnosis codes from prescriber."""
@@ -30518,6 +31190,18 @@ class PDFViewer(QMainWindow):
                     WHERE last_name = ? AND first_name = ? AND dob = ?
                 """, (last_name, first_name, patient_dob))
                 p_row = p_cur.fetchone()
+                if not p_row:
+                    # Fallback: DOB formats can vary; use name-based lookup and prefer exact DOB if present.
+                    p_cur.execute("""
+                        SELECT address, city, state, zip
+                        FROM patients
+                        WHERE UPPER(TRIM(last_name)) = UPPER(TRIM(?))
+                          AND UPPER(TRIM(first_name)) = UPPER(TRIM(?))
+                        ORDER BY CASE WHEN TRIM(COALESCE(dob, '')) = TRIM(COALESCE(?, '')) THEN 0 ELSE 1 END,
+                                 id DESC
+                        LIMIT 1
+                    """, (last_name or "", first_name or "", patient_dob or ""))
+                    p_row = p_cur.fetchone()
                 p_conn.close()
                 if p_row:
                     # Use patient DB street address as fallback if orders table has no address
@@ -30545,24 +31229,29 @@ class PDFViewer(QMainWindow):
             except Exception:
                 pass
             
-            # Prepare items for the form - include all items that need refill requests
+            dx_codes = [dx.strip() for dx in [icd1, icd2, icd3, icd4, icd5] if dx and dx.strip()]
+
+            # Prepare items for the form and allow user to add extra lines
+            # before finalizing the refill request packet.
             request_items = []
             for hcpcs, desc, qty, refills, day_supply in items:
-                # Parse refills to determine if we need a new prescription
                 try:
                     refills_remaining = int(refills) if refills else 0
                 except (ValueError, TypeError):
                     refills_remaining = 0
-                
-                # Include items with 0 or low refills
                 request_items.append((desc, qty, hcpcs, refills_remaining))
             
             if not request_items:
                 QMessageBox.information(self, "No Items", "No items found in this order to request refills for.")
                 return
-            
-            # Collect diagnosis codes
-            dx_codes = [dx for dx in [icd1, icd2, icd3, icd4, icd5] if dx and dx.strip()]
+
+            request_result = self._edit_refill_request_items(request_items, dx_codes)
+            if request_result is None:  # user canceled
+                return
+            request_items, dx_codes = request_result
+            if not request_items:
+                QMessageBox.warning(self, "No Items", "Please include at least one item before finalizing the refill request.")
+                return
             
             # Ask for optional attention text
             attention_text = self._get_fax_attention_text("Refill Request")
@@ -30581,6 +31270,220 @@ class PDFViewer(QMainWindow):
             QMessageBox.critical(self, "Refill Request Error", f"Failed to create refill request:\n{e}")
             import traceback
             traceback.print_exc()
+
+    def _edit_refill_request_items(self, initial_items, initial_dx_codes=None):
+        """Review pre-populated order items and optionally add more lines."""
+        from PyQt6.QtWidgets import (
+            QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+            QTableWidget, QTableWidgetItem, QHeaderView, QLineEdit, QSpinBox,
+            QMessageBox,
+        )
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Refill Request Items")
+        dialog.setMinimumWidth(760)
+        dialog.setMinimumHeight(420)
+
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("<b>These items are already on the refill request.</b>\nIf you need to add more lines, click <b>Add Item</b>. If not, click <b>Continue</b>."))
+
+        dx_layout = QVBoxLayout()
+        dx_layout.addWidget(QLabel("<b>Provider ICD-10 Codes</b> (add or change before finalizing):"))
+        dx_input = QLineEdit()
+        dx_input.setPlaceholderText("e.g. R39.81, N39.41")
+        dx_input.setText(", ".join([dx for dx in (initial_dx_codes or []) if dx]))
+        dx_layout.addWidget(dx_input)
+        layout.addLayout(dx_layout)
+
+        summary_table = QTableWidget()
+        summary_table.setColumnCount(4)
+        summary_table.setHorizontalHeaderLabels(["Item Description", "HCPCS", "Monthly Qty", "Refills Left"])
+        summary_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        summary_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        summary_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        summary_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        summary_table.setMinimumHeight(180)
+        layout.addWidget(summary_table)
+
+        # Load inventory choices and merge with current order items so the
+        # pre-populated rows are always visible/editable, even if not in inventory.
+        conn = sqlite3.connect(self.inventory_database_file)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT DISTINCT description, hcpcs_code FROM inventory "
+            "WHERE description IS NOT NULL AND description != '' ORDER BY description"
+        )
+        inventory_rows = cur.fetchall()
+        conn.close()
+
+        def _safe_int(v, default=0):
+            try:
+                return int(float(v))
+            except Exception:
+                return default
+
+        # Keys are (description, hcpcs) to avoid collisions where desc repeats.
+        item_quantities = {}
+        refills_by_key = {}
+        all_rows = []
+        seen_keys = set()
+
+        for desc, hcpcs in inventory_rows:
+            d = (desc or "").strip()
+            h = normalize_hcpcs_code(hcpcs)
+            key = (d, h)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            all_rows.append((d, h))
+
+        for item in initial_items:
+            if len(item) >= 4:
+                desc, qty, hcpcs, refills_remaining = item[0], item[1], item[2], item[3]
+            elif len(item) >= 3:
+                desc, qty, hcpcs = item[0], item[1], item[2]
+                refills_remaining = 0
+            else:
+                desc, qty = item[0], item[1] if len(item) > 1 else 0
+                hcpcs, refills_remaining = "", 0
+
+            d = (desc or "").strip()
+            h = normalize_hcpcs_code(hcpcs)
+            key = (d, h)
+            item_quantities[key] = max(item_quantities.get(key, 0), _safe_int(qty, 0))
+            refills_by_key[key] = _safe_int(refills_remaining, 0)
+            if key not in seen_keys:
+                seen_keys.add(key)
+                all_rows.append((d, h))
+
+        def refresh_summary_table():
+            summary_table.setRowCount(0)
+            rows = sorted(item_quantities.items(), key=lambda pair: (pair[0][0].lower(), pair[0][1].lower()))
+            summary_table.setRowCount(len(rows))
+            for i, ((desc, hcpcs), qty) in enumerate(rows):
+                summary_table.setItem(i, 0, QTableWidgetItem(desc))
+                summary_table.setItem(i, 1, QTableWidgetItem(hcpcs))
+                summary_table.setItem(i, 2, QTableWidgetItem(str(_safe_int(qty, 0))))
+                summary_table.setItem(i, 3, QTableWidgetItem(str(_safe_int(refills_by_key.get((desc, hcpcs), 0), 0))))
+
+        def add_more_items():
+            add_dialog = QDialog(dialog)
+            add_dialog.setWindowTitle("Add Items to Refill Request")
+            add_dialog.setMinimumWidth(880)
+            add_dialog.setMinimumHeight(620)
+            add_layout = QVBoxLayout(add_dialog)
+            add_layout.addWidget(QLabel("<b>Select any additional items and quantities to append to the refill request.</b>"))
+
+            add_filter_layout = QHBoxLayout()
+            add_filter_layout.addWidget(QLabel("Filter:"))
+            add_filter_input = QLineEdit()
+            add_filter_input.setPlaceholderText("Search by description or HCPCS code...")
+            add_filter_layout.addWidget(add_filter_input)
+            add_layout.addLayout(add_filter_layout)
+
+            add_table = QTableWidget()
+            add_table.setColumnCount(3)
+            add_table.setHorizontalHeaderLabels(["Item Description", "HCPCS", "Monthly Qty"])
+            add_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+            add_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+            add_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+            add_layout.addWidget(add_table)
+
+            selected_keys = set(item_quantities.keys())
+
+            def populate_add_table(filter_text=""):
+                # Persist edits before rebuilding.
+                for i in range(add_table.rowCount()):
+                    desc_item = add_table.item(i, 0)
+                    hcpcs_item = add_table.item(i, 1)
+                    qty_widget = add_table.cellWidget(i, 2)
+                    if not desc_item or not hcpcs_item or not qty_widget:
+                        continue
+                    key = ((desc_item.text() or "").strip(), normalize_hcpcs_code(hcpcs_item.text()))
+                    if key not in selected_keys:
+                        continue
+                    item_quantities[key] = max(item_quantities.get(key, 0), qty_widget.value())
+
+                add_table.setRowCount(0)
+                needle = (filter_text or "").strip().lower()
+                rows = []
+                for desc, hcpcs in all_rows:
+                    key = (desc, hcpcs)
+                    if key in selected_keys:
+                        continue
+                    if needle and needle not in desc.lower() and needle not in hcpcs.lower():
+                        continue
+                    rows.append((desc, hcpcs))
+
+                add_table.setRowCount(len(rows))
+                for i, (desc, hcpcs) in enumerate(rows):
+                    add_table.setItem(i, 0, QTableWidgetItem(desc))
+                    add_table.setItem(i, 1, QTableWidgetItem(hcpcs))
+                    qty_spin = QSpinBox()
+                    qty_spin.setMinimum(0)
+                    qty_spin.setMaximum(999)
+                    qty_spin.setValue(0)
+                    add_table.setCellWidget(i, 2, qty_spin)
+
+            populate_add_table()
+            add_filter_input.textChanged.connect(populate_add_table)
+
+            add_btns = QHBoxLayout()
+            add_btns.addStretch()
+            cancel_btn = QPushButton("Close")
+            cancel_btn.clicked.connect(add_dialog.reject)
+            add_btns.addWidget(cancel_btn)
+            done_btn = QPushButton("Add Selected")
+            done_btn.clicked.connect(add_dialog.accept)
+            add_btns.addWidget(done_btn)
+            add_layout.addLayout(add_btns)
+
+            if add_dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+
+            # Persist final edits from the add dialog.
+            for i in range(add_table.rowCount()):
+                desc_item = add_table.item(i, 0)
+                hcpcs_item = add_table.item(i, 1)
+                qty_widget = add_table.cellWidget(i, 2)
+                if not desc_item or not hcpcs_item or not qty_widget:
+                    continue
+                key = ((desc_item.text() or "").strip(), normalize_hcpcs_code(hcpcs_item.text()))
+                qty = qty_widget.value()
+                if qty > 0:
+                    item_quantities[key] = max(item_quantities.get(key, 0), qty)
+                    refills_by_key.setdefault(key, 0)
+                    selected_keys.add(key)
+
+            refresh_summary_table()
+
+        refresh_summary_table()
+
+        btn_layout = QHBoxLayout()
+        add_more_btn = QPushButton("Add Item...")
+        add_more_btn.clicked.connect(add_more_items)
+        btn_layout.addWidget(add_more_btn)
+        btn_layout.addStretch()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(dialog.reject)
+        btn_layout.addWidget(cancel_btn)
+        done_btn = QPushButton("Continue")
+        done_btn.clicked.connect(dialog.accept)
+        btn_layout.addWidget(done_btn)
+        layout.addLayout(btn_layout)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+
+        selected_items = []
+        for (desc, hcpcs), qty in item_quantities.items():
+            if _safe_int(qty, 0) <= 0:
+                continue
+            refills_remaining = refills_by_key.get((desc, hcpcs), 0)
+            selected_items.append((desc, str(_safe_int(qty, 0)), hcpcs, refills_remaining))
+
+        dx_codes = [dx.strip().upper() for dx in dx_input.text().replace("\n", ",").split(",") if dx.strip()]
+        return selected_items, dx_codes
 
     def _generate_refill_request_packet(self, last_name, first_name, patient_dob, patient_address, patient_phone,
                                         prescriber_name, prescriber_npi, items, dx_codes=None,
@@ -30683,14 +31586,15 @@ class PDFViewer(QMainWindow):
             tab_position = 0.5*inch + stringWidth('Address: ', 'Helvetica', 10)
             
             dob_formatted = self.format_date_display(patient_dob) if patient_dob else ''
+            city_state_zip = ', '.join(filter(None, [patient_city, patient_state, patient_zip]))
+            display_address_line = (patient_address or '').strip() or city_state_zip or 'Address on file unavailable'
             c.drawString(0.5*inch, y, 'DOB:')
             c.drawString(tab_position, y, dob_formatted)
             y -= 0.15*inch
             c.drawString(0.5*inch, y, 'Address:')
-            c.drawString(tab_position, y, patient_address or "N/A")
+            c.drawString(tab_position, y, display_address_line)
             y -= 0.15*inch
-            if patient_city or patient_state or patient_zip:
-                city_state_zip = ', '.join(filter(None, [patient_city, patient_state, patient_zip]))
+            if city_state_zip and city_state_zip != display_address_line:
                 c.drawString(tab_position, y, city_state_zip)
                 y -= 0.15*inch
             c.drawString(0.5*inch, y, 'Phone:')
@@ -30716,16 +31620,104 @@ class PDFViewer(QMainWindow):
             c.setFont('Helvetica', 10)
             c.drawString(0.5*inch, y, "If you need to reach the patient directly, their contact information is listed above.")
 
-            # Items list introduction
-            y -= 0.4*inch
+            # MD approval instructions
+            y -= 1.30*inch
+            instruction_title_y = y
+            instruction_text_x = 0.75*inch
+
+            # Title + headline + numbered list, with fixed padding so it always sits cleanly inside the panel.
+            bold_lines = [
+                'Please send new prescriptions via EMR or fill,',
+                'sign and fax form back to approve refills.',
+            ]
+            small_lines = [
+                ('Helvetica', 9, '1. Check the box next to each item you are approving for refill.'),
+                ('Helvetica', 9, '2. Write in how many refills you are ordering next to each item.'),
+                ('Helvetica', 9, '3. Sign and date below, then fax this completed form back to us at 347-947-8102.'),
+                ('Helvetica', 9, '   This signed fax will serve as the new prescription.'),
+            ]
+
+            title_step = 0.24*inch
+            bold_line_height = 0.24*inch
+            between_headline_and_list = 0.12*inch
+            small_line_height = 0.19*inch
+            top_padding = 0.24*inch
+            bottom_padding = 0.20*inch
+
+            instruction_box_top = instruction_title_y + top_padding
+            content_height = title_step + (len(bold_lines) * bold_line_height) + between_headline_and_list + (len(small_lines) * small_line_height)
+            instruction_box_bottom = instruction_box_top - (0.14*inch + content_height + bottom_padding)
+
+            # Subtle panel background and border to improve readability.
+            c.setLineWidth(0.6)
+            c.setFillColorRGB(0.97, 0.97, 0.97)
+            c.rect(0.5*inch, instruction_box_bottom, width - 1.0*inch, instruction_box_top - instruction_box_bottom, fill=1, stroke=1)
+            c.setFillColorRGB(0, 0, 0)
+
+            title_y = instruction_box_top - 0.18*inch
+            c.setFont('Helvetica-Bold', 9)
+            c.drawString(instruction_text_x, title_y, 'INSTRUCTIONS FOR PRESCRIBER:')
+
+            divider_y = title_y - 0.05*inch
+            c.setLineWidth(0.4)
+            c.line(instruction_text_x, divider_y, width - 0.75*inch, divider_y)
+
+            title_y -= title_step
+            c.setFont('Helvetica-Bold', 15)
+            for ln in bold_lines:
+                c.drawString(instruction_text_x, title_y, ln)
+                title_y -= bold_line_height
+
+            title_y -= between_headline_and_list
+            for font_name, font_size, ln in small_lines:
+                c.setFont(font_name, font_size)
+                c.drawString(instruction_text_x, title_y, ln)
+                title_y -= small_line_height
+
+            # Start the refill authorization form details on page 2.
+            c.showPage()
+            width, height = letter
+            y = height - 0.75*inch
+
+            c.setFont('Helvetica-Bold', 15)
+            c.drawString(0.5*inch, y, 'REFILL AUTHORIZATION FORM')
+            y -= 0.12*inch
+            c.setLineWidth(0.8)
+            c.line(0.5*inch, y, width - 0.5*inch, y)
+
+            y -= 0.28*inch
+            c.setFont('Helvetica-Bold', 11)
+            c.drawString(0.5*inch, y, f'Patient: {patient_name}')
+            y -= 0.18*inch
+
+            c.setFont('Helvetica', 10)
+            tab_position_p2 = 0.5*inch + stringWidth('Address: ', 'Helvetica', 10)
+            c.drawString(0.5*inch, y, 'DOB:')
+            c.drawString(tab_position_p2, y, dob_formatted)
+            y -= 0.15*inch
+            c.drawString(0.5*inch, y, 'Address:')
+            c.drawString(tab_position_p2, y, display_address_line)
+            y -= 0.15*inch
+            if city_state_zip and city_state_zip != display_address_line:
+                c.drawString(tab_position_p2, y, city_state_zip)
+                y -= 0.15*inch
+            c.drawString(0.5*inch, y, 'Phone:')
+            c.drawString(tab_position_p2, y, patient_phone or 'N/A')
+
+            y -= 0.18*inch
+            c.setLineWidth(0.5)
+            c.line(0.5*inch, y, width - 0.5*inch, y)
+
+            # Intro paragraph beneath phone/rule
+            y -= 0.22*inch
             c.setFont('Helvetica', 10)
             c.drawString(0.5*inch, y, "Below is a list of the DME items that require new prescriptions along with the current quantities being supplied.")
-            y -= 0.15*inch
+            y -= 0.16*inch
             c.setFont('Helvetica-Bold', 10)
             c.drawString(0.5*inch, y, "Please issue new prescriptions at your earliest convenience.")
 
             # Items list header
-            y -= 0.4*inch
+            y -= 0.28*inch
             c.setFont('Helvetica-Bold', 11)
             c.drawString(0.5*inch, y, 'ITEMS REQUIRING NEW PRESCRIPTIONS:')
             y -= 0.05*inch
@@ -30733,13 +31725,14 @@ class PDFViewer(QMainWindow):
             c.line(0.5*inch, y, width - 0.5*inch, y)
             y -= 0.2*inch
             c.setFont('Helvetica', 10)
-            
+            refill_row_height = 0.26*inch
+
             from dmelogic.utils.hcpcs_mapper import get_hcpcs_mapper
             mapper = get_hcpcs_mapper()
             mapped_items = []
             debug_rows: List[Dict[str, Any]] = []
 
-            for item in items:
+            for item_num, item in enumerate(items, start=1):
                 if len(item) >= 4:
                     desc, qty, hcpcs, refills_remaining = item[0], item[1], item[2], item[3]
                 elif len(item) >= 3:
@@ -30766,16 +31759,15 @@ class PDFViewer(QMainWindow):
 
                 item_text = f"{str(mapped_desc or '').strip()}"
                 qty_text = f"Qty: {str(qty or '').strip()}"
-                refill_status = f"(Refills: {refills_remaining})" if refills_remaining > 0 else "(OUT OF REFILLS)"
-                
-                # Draw bullet and item
-                c.drawString(0.6*inch, y, '•')
-                
+                refill_status = f"Refills Left: {refills_remaining}"
+
+                # Checkbox square + item number
+                c.rect(0.5*inch, y - 0.01*inch, 0.13*inch, 0.13*inch)
+
                 # Handle long descriptions
-                max_width = 4.5*inch
-                
+                max_width = 4.2*inch
+
                 if stringWidth(item_text, 'Helvetica', 10) > max_width:
-                    # Word wrap
                     words = item_text.split()
                     lines = []
                     current_line = ''
@@ -30789,30 +31781,45 @@ class PDFViewer(QMainWindow):
                             current_line = word
                     if current_line:
                         lines.append(current_line)
-                    
-                    # First line with quantity and refill status
-                    c.drawString(0.75*inch, y, lines[0])
-                    c.drawRightString(width - 0.5*inch, y, f"{qty_text} {refill_status}")
-                    y -= 0.18*inch
-                    
+
+                    c.drawString(0.7*inch, y, f"{item_num}.  {lines[0]}")
+                    c.drawRightString(width - 0.5*inch, y,
+                                      f"{qty_text}  |  {refill_status}  |  Refills to order: __________")
+                    y -= refill_row_height
+
                     for line in lines[1:]:
                         if y < 0.75*inch:
                             c.showPage()
                             width, height = letter
                             y = height - 1*inch
                             c.setFont('Helvetica', 10)
-                        c.drawString(0.75*inch, y, line)
-                        y -= 0.18*inch
+                        c.drawString(0.85*inch, y, line)
+                        y -= 0.2*inch
                 else:
-                    c.drawString(0.75*inch, y, item_text)
-                    c.drawRightString(width - 0.5*inch, y, f"{qty_text} {refill_status}")
-                    y -= 0.18*inch
-                
+                    c.drawString(0.7*inch, y, f"{item_num}.  {item_text}")
+                    c.drawRightString(width - 0.5*inch, y,
+                                      f"{qty_text}  |  {refill_status}  |  Refills to order: __________")
+                    y -= refill_row_height
+
                 if y < 0.75*inch:
                     c.showPage()
                     width, height = letter
                     y = height - 1*inch
                     c.setFont('Helvetica', 10)
+
+            # "Approve ALL" shortcut row (only when more than one item)
+            if len(items) > 1:
+                y -= 0.05*inch
+                c.setLineWidth(0.25)
+                c.setDash(3, 3)
+                c.line(0.5*inch, y + 0.14*inch, width - 0.5*inch, y + 0.14*inch)
+                c.setDash()
+                c.setLineWidth(0.5)
+                c.rect(0.5*inch, y - 0.01*inch, 0.13*inch, 0.13*inch)
+                c.setFont('Helvetica-Bold', 10)
+                c.drawString(0.7*inch, y, 'Approve ALL items listed above')
+                c.drawRightString(width - 0.5*inch, y, 'Refills (all items): __________')
+                y -= refill_row_height
 
             log_hcpcs_debug("refill_request", debug_rows)
 
@@ -30824,6 +31831,9 @@ class PDFViewer(QMainWindow):
                     y = height - 1*inch
                 
                 y -= 0.3*inch
+                c.setFont('Helvetica-Bold', 9)
+                c.drawString(0.5*inch, y, 'Please review and confirm the diagnosis, and make any necessary changes or additions.')
+                y -= 0.18*inch
                 c.setFont('Helvetica-Bold', 10)
                 c.drawString(0.5*inch, y, 'Current Diagnosis Codes on File:')
                 y -= 0.18*inch
@@ -30831,17 +31841,50 @@ class PDFViewer(QMainWindow):
                 dx_text = ', '.join(dx_codes)
                 c.drawString(0.7*inch, y, dx_text)
 
+            # MD approval signature block
+            if y < 3.5*inch:
+                c.showPage()
+                width, height = letter
+                y = height - 1*inch
+
+            y -= 0.25*inch
+            c.setLineWidth(0.5)
+            c.line(0.5*inch, y, width - 0.5*inch, y)
+            y -= 0.18*inch
+            c.setFont('Helvetica-Bold', 10)
+            c.drawString(0.5*inch, y, 'PRESCRIBER APPROVAL — please sign below and fax back to 347-947-8102')
+            y -= 0.38*inch
+            sig_end = 0.5*inch + 4.5*inch
+            c.line(0.5*inch, y, sig_end, y)
+            c.line(sig_end + 0.2*inch, y, width - 0.5*inch, y)
+            y -= 0.14*inch
+            c.setFont('Helvetica', 8)
+            c.drawString(0.5*inch, y, 'Prescriber Signature')
+            c.drawString(sig_end + 0.2*inch, y, 'Date (MM/DD/YYYY)')
+            y -= 0.3*inch
+            c.line(0.5*inch, y, width - 0.5*inch, y)
+            y -= 0.14*inch
+            c.drawString(0.5*inch, y, 'Printed Name & NPI')
+            y -= 0.24*inch
+
+            c.setFont('Helvetica-Bold', 9)
+            c.drawString(0.5*inch, y, 'NOTICE TO PRESCRIBER: By signing this form, you certify this is a valid and legal prescription/order')
+            y -= 0.15*inch
+            c.setFont('Helvetica', 9)
+            c.drawString(0.5*inch, y, 'for the patient listed above, in accordance with applicable federal and state requirements.')
+            y -= 0.24*inch
+
             # Footer
             if y < 2.5*inch:
                 c.showPage()
                 width, height = letter
                 y = height - 1*inch
-            
-            y -= 0.3*inch
+
+            y -= 0.45*inch
             c.setLineWidth(0.5)
             c.line(0.5*inch, y, width - 0.5*inch, y)
             y -= 0.25*inch
-            
+
             c.setFont('Helvetica', 10)
             c.drawString(0.5*inch, y, 'Thank you,')
             y -= 0.18*inch

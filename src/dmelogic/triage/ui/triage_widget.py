@@ -13,6 +13,8 @@ embeddable as a tab.
 from __future__ import annotations
 
 import logging
+import re
+from datetime import datetime
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QTimer, QThread
@@ -44,6 +46,14 @@ _BTN_GHOST = (
     " padding:7px 14px; border:1px solid #e2e8f0; border-radius:8px; }"
     "QPushButton:hover { background:#f1f5f9; border-color:#cbd5e1; }"
 )
+
+
+def _inbox_display_label() -> str:
+    """Always show New Rx in UI, even when intake folder is custom-named."""
+    configured = (intake_folder_name() or "").strip()
+    if configured and configured.lower() != "new rx":
+        return f"New Rx ({configured})"
+    return "New Rx"
 
 
 class _DropLocationsList(QListWidget):
@@ -94,6 +104,8 @@ class TriageWidget(QWidget):
         self._current_doc: Document | None = None
         self._location = _INBOX_KEY
 
+        self._run_bucket_scans_migration_once()
+
         self._build_ui()
         self.refresh(scan=True)
 
@@ -112,7 +124,7 @@ class TriageWidget(QWidget):
         header = QHBoxLayout()
         title_block = QVBoxLayout()
         title_block.setSpacing(0)
-        title = QLabel(intake_folder_name())
+        title = QLabel(_inbox_display_label())
         title.setStyleSheet("font-size:20px; font-weight:800; color:#0f172a;")
         subtitle = QLabel("Review incoming prescriptions, route them, and track what's happening")
         subtitle.setStyleSheet("color:#64748b; font-size:11px;")
@@ -127,6 +139,12 @@ class TriageWidget(QWidget):
         self.search_edit.setFixedWidth(300)
         header.addWidget(self.search_edit)
         header.addStretch()
+        refresh_btn = QPushButton("↻ Refresh New Rx")
+        refresh_btn.setStyleSheet(_BTN_GHOST)
+        refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        refresh_btn.setToolTip(f"Rescan and reload documents from: {new_rx_folder()}")
+        refresh_btn.clicked.connect(lambda: self.refresh(scan=True, keep_selection=True))
+        header.addWidget(refresh_btn)
         manage_btn = QPushButton("⚙ Manage Buckets")
         manage_btn.setStyleSheet(_BTN_GHOST)
         manage_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -205,8 +223,14 @@ class TriageWidget(QWidget):
         self.link_btn.setStyleSheet(_BTN_PRIMARY)
         self.link_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.link_btn.clicked.connect(self._link_patient)
+        self.create_order_btn = QPushButton("🛒 Create Order")
+        self.create_order_btn.setStyleSheet(_BTN_PRIMARY)
+        self.create_order_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.create_order_btn.setToolTip("Create a new order for the linked patient")
+        self.create_order_btn.clicked.connect(self._create_order)
         actions.addWidget(self.rename_btn)
         actions.addWidget(self.link_btn)
+        actions.addWidget(self.create_order_btn)
         layout.addLayout(actions)
 
         # Routing
@@ -242,6 +266,18 @@ class TriageWidget(QWidget):
         lbl = QLabel(text)
         lbl.setStyleSheet("color:#94a3b8; font-size:11px; font-weight:600; margin-top:6px;")
         return lbl
+
+    def _run_bucket_scans_migration_once(self) -> None:
+        """One-time migration: bucketed docs -> Scans/<Letter> for current DB."""
+        if getattr(self, "_bucket_scans_migration_done", False):
+            return
+        self._bucket_scans_migration_done = True
+        try:
+            moved = self.svc.migrate_bucketed_docs_to_scans_letters()
+            if moved:
+                logger.info("Triage migration moved %d bucketed doc(s) into Scans A-Z", moved)
+        except Exception as e:
+            logger.warning("Triage bucket->Scans migration failed: %s", e)
 
     # ── refresh ─────────────────────────────────────────────────────────
     def refresh(self, scan: bool = False, keep_selection: bool = False) -> None:
@@ -297,7 +333,7 @@ class TriageWidget(QWidget):
         self.locations.blockSignals(True)
         self.locations.clear()
 
-        inbox_item = QListWidgetItem(f"📥  {intake_folder_name()}  ({counts.get(None, 0)})")
+        inbox_item = QListWidgetItem(f"📥  {_inbox_display_label()}  ({counts.get(None, 0)})")
         inbox_item.setData(Qt.ItemDataRole.UserRole, _INBOX_KEY)
         self.locations.addItem(inbox_item)
 
@@ -339,6 +375,13 @@ class TriageWidget(QWidget):
         else:
             docs = self.svc.in_bucket(self._location)
 
+        # Always show newest first.
+        # Priority:
+        #  1) leading filename timestamp (e.g. 20260618_111125_*),
+        #  2) file modified time on disk,
+        #  3) DB updated/created timestamps.
+        docs = sorted(docs, key=self._doc_sort_key, reverse=True)
+
         from dmelogic.triage.ocr import quality_badge, GOOD, FAIR
         from PyQt6.QtGui import QColor
         self.doc_list.blockSignals(True)
@@ -378,6 +421,48 @@ class TriageWidget(QWidget):
             self.doc_list.setCurrentRow(0)
         else:
             self._show_doc(None)
+
+    def _doc_sort_key(self, doc: Document) -> tuple[float, int]:
+        """Return comparable key so list order is newest -> oldest."""
+        # 1) Prefer filename leading timestamp: YYYYMMDD[_-]HHMMSS
+        ts = self._filename_timestamp(doc.filename)
+        if ts is not None:
+            return (ts, int(doc.id or 0))
+
+        # 2) Then filesystem mtime (most reliable arrival proxy for renamed docs).
+        try:
+            mtime = Path(doc.current_path).stat().st_mtime
+            return (float(mtime), int(doc.id or 0))
+        except Exception:
+            pass
+
+        # 3) Fallback to DB timestamps.
+        for s in (doc.updated_at, doc.created_at):
+            if not s:
+                continue
+            try:
+                dt = datetime.strptime(str(s), "%Y-%m-%d %H:%M:%S")
+                return (dt.timestamp(), int(doc.id or 0))
+            except Exception:
+                continue
+
+        return (0.0, int(doc.id or 0))
+
+    @staticmethod
+    def _filename_timestamp(name: str) -> float | None:
+        """Parse leading file timestamp like 20260618_111125 (or date-only)."""
+        raw = (name or "").strip()
+        # Matches: 20260618_111125..., 20260618-111125..., 20260618...
+        m = re.match(r"^(\d{8})(?:[_-]?(\d{6}))?", raw)
+        if not m:
+            return None
+        ymd = m.group(1)
+        hms = m.group(2) or "000000"
+        try:
+            dt = datetime.strptime(f"{ymd}{hms}", "%Y%m%d%H%M%S")
+            return dt.timestamp()
+        except Exception:
+            return None
 
     def _refresh_routing_buttons(self) -> None:
         while self.routing_layout.count():
@@ -488,6 +573,8 @@ class TriageWidget(QWidget):
             self.detail_link.setText("🔗 " + ", ".join(bits))
         else:
             self.detail_link.setText("Not linked")
+        # Enable create order button only if patient is linked
+        self.create_order_btn.setEnabled(doc.patient_id is not None)
         self._refresh_history()
 
     def _patient_display_name(self, patient_id: int) -> str:
@@ -514,19 +601,16 @@ class TriageWidget(QWidget):
             self.history_list.addItem(item)
 
     def _set_details_enabled(self, on: bool) -> None:
-        for w in (self.rename_btn, self.link_btn, self.note_edit, self.routing_host):
+        for w in (self.rename_btn, self.link_btn, self.create_order_btn, self.note_edit, self.routing_host):
             w.setEnabled(on)
 
     # ── actions ─────────────────────────────────────────────────────────
     def _rename(self):
         if not self._current_doc:
             return
-        # Suggest a name read from the document (OCR), falling back to current.
-        suggestion = self._current_doc.filename
-        if self._current_doc.detected_name:
-            suggestion = self._current_doc.detected_name
-            if self._current_doc.detected_dob:
-                suggestion += f" ({self._current_doc.detected_dob})"
+        # Suggest: LAST, FIRST (DOB) CATEGORY RXDATE
+        # Falls back to current filename when parsing is unavailable.
+        suggestion = self._build_rename_suggestion(self._current_doc)
         new, ok = QInputDialog.getText(
             self, "Rename document", "New file name:", text=suggestion
         )
@@ -539,6 +623,101 @@ class TriageWidget(QWidget):
                 QMessageBox.warning(self, "Rename failed", str(e))
             self.refresh(keep_selection=True)
             self._show_doc(self._current_doc)
+
+    def _build_rename_suggestion(self, doc: Document) -> str:
+        """Build rename seed: LAST, FIRST (DOB) CATEGORY RXDATE."""
+        suggestion = doc.filename
+
+        # Base name + DOB from quick OCR fields.
+        patient_name = (doc.detected_name or "").strip()
+        patient_dob = (doc.detected_dob or "").strip()
+        item_category = ""
+        rx_date = ""
+
+        try:
+            from dmelogic.ocr_tools import extract_text_from_pdf
+            from dmelogic.services.rx_parser import RxParser
+
+            text = extract_text_from_pdf(doc.current_path) or ""
+            parsed = RxParser().parse_text(text) if text.strip() else []
+            if parsed:
+                rx = parsed[0]
+                if not patient_name:
+                    patient_name = self._compose_patient_name(
+                        (rx.patient.last_name or "").strip(),
+                        (rx.patient.first_name or "").strip(),
+                        (rx.patient.full_name or "").strip(),
+                    )
+                if not patient_dob:
+                    patient_dob = (rx.patient.dob or "").strip()
+                rx_date = self._normalize_date((rx.rx_date or "").strip())
+                item_category = self._infer_item_category(
+                    item_text=(rx.item.drug_name or ""),
+                    source_text=(rx.source_text or ""),
+                    icd_codes=getattr(rx, "icd_codes", None) or [],
+                )
+        except Exception as e:
+            logger.debug("rename suggestion parse skipped: %s", e)
+
+        parts: list[str] = []
+        if patient_name:
+            if patient_dob:
+                parts.append(f"{patient_name} ({self._normalize_date(patient_dob)})")
+            else:
+                parts.append(patient_name)
+        if item_category:
+            parts.append(item_category)
+        if rx_date:
+            parts.append(rx_date)
+
+        return " ".join(p for p in parts if p).strip() or suggestion
+
+    @staticmethod
+    def _compose_patient_name(last_name: str, first_name: str, full_name: str) -> str:
+        if last_name or first_name:
+            return ", ".join(p for p in (last_name, first_name) if p)
+        return (full_name or "").strip()
+
+    @staticmethod
+    def _normalize_date(raw: str) -> str:
+        txt = (raw or "").strip()
+        if not txt:
+            return ""
+        for fmt in ("%m/%d/%Y", "%m/%d/%y", "%m-%d-%Y", "%m-%d-%y"):
+            try:
+                return datetime.strptime(txt, fmt).strftime("%m-%d-%Y")
+            except Exception:
+                continue
+        return txt.replace("/", "-")
+
+    @staticmethod
+    def _infer_item_category(item_text: str, source_text: str, icd_codes: list[str]) -> str:
+        """Map parsed RX details into a short user-facing category label."""
+        blob = " ".join([
+            str(item_text or ""),
+            str(source_text or ""),
+            " ".join(str(c or "") for c in (icd_codes or [])),
+        ]).lower()
+
+        category_rules = [
+            ("Incontinence", [
+                "incontinence", "underpad", "underpads", "diaper", "diapers", "brief", "briefs", "pull-up", "pullups", "chux",
+                "n39.", "r39.81", "r15.", "t452", "t453", "a4554",
+            ]),
+            ("Urological", ["catheter", "urinary bag", "urology", "foley"]),
+            ("Ostomy", ["ostomy", "colostomy", "ileostomy"]),
+            ("Wound Care", ["wound", "dressing", "bandage", "alginate", "foam dressing"]),
+            ("Respiratory", ["cpap", "bipap", "nebulizer", "oxygen"]),
+            ("Mobility", ["wheelchair", "walker", "rollator", "cane", "crutch"]),
+            ("Diabetic", ["diabetic", "glucose", "glucometer", "test strip", "lancet"]),
+            ("Compression", ["compression", "mmhg", "stocking", "jobst", "sigvaris"]),
+        ]
+
+        for label, keys in category_rules:
+            if any(k in blob for k in keys):
+                return label
+
+        return "DME"
 
     def _add_note(self):
         if not self._current_doc:
@@ -611,13 +790,171 @@ class TriageWidget(QWidget):
         source = self._current_doc.detected_name or self._current_doc.filename or ""
         guess = source.split(",")[0].strip()
         from dmelogic.triage.ui.patient_picker import PatientPickerDialog
-        dlg = PatientPickerDialog(self, initial=guess)
-        if dlg.exec() and dlg.selected_patient():
-            pid, label = dlg.selected_patient()
-            self._current_doc = self.svc.link(
-                self._current_doc, patient_id=pid, label=label
+        while True:
+            dlg = PatientPickerDialog(self, initial=guess)
+            result = dlg.exec()
+            if result and dlg.selected_patient():
+                pid, label = dlg.selected_patient()
+                self._current_doc = self.svc.link(
+                    self._current_doc, patient_id=pid, label=label
+                )
+                self._show_doc(self._current_doc)
+                return
+
+            if result == PatientPickerDialog.RESULT_CREATE_PATIENT:
+                prefill = self._extract_patient_prefill(initial_name=guess)
+                if self._open_new_patient_profile(guess, prefill=prefill):
+                    continue
+                return
+
+            # If user couldn't find/select a patient, offer immediate creation.
+            create_now = QMessageBox.question(
+                self,
+                "Patient Not Found",
+                "Patient not found in the list.\n\nCreate a new patient profile now?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
             )
-            self._show_doc(self._current_doc)
+            if create_now != QMessageBox.StandardButton.Yes:
+                return
+
+            prefill = self._extract_patient_prefill(initial_name=guess)
+            if not self._open_new_patient_profile(guess, prefill=prefill):
+                return
+
+    def _extract_patient_prefill(self, initial_name: str = "") -> dict:
+        """Build patient defaults from detected RX data, for user completion."""
+        if not self._current_doc:
+            return {}
+
+        def _split_name(name: str) -> tuple[str, str]:
+            raw = (name or "").strip()
+            if not raw:
+                return "", ""
+            # Strip trailing DOB hints from labels like "LAST, FIRST (DOB ...)".
+            raw = re.sub(r"\s*\([^)]*DOB[^)]*\)\s*$", "", raw, flags=re.IGNORECASE).strip()
+            if "," in raw:
+                last, first = raw.split(",", 1)
+                return last.strip(), first.strip()
+            parts = raw.split()
+            if len(parts) >= 2:
+                return parts[-1].strip(), " ".join(parts[:-1]).strip()
+            return raw, ""
+
+        prefill: dict = {}
+
+        # First pass: from already-read triage metadata.
+        guessed_name = (self._current_doc.detected_name or initial_name or "").strip()
+        last, first = _split_name(guessed_name)
+        if last:
+            prefill["last_name"] = last
+        if first:
+            prefill["first_name"] = first
+        if self._current_doc.detected_dob:
+            prefill["dob"] = str(self._current_doc.detected_dob).replace("-", "/")
+
+        # Second pass: parse full OCR text to extract more demographics.
+        try:
+            from dmelogic.ocr_tools import extract_text_from_pdf
+            from dmelogic.services.rx_parser import RxParser
+
+            text = extract_text_from_pdf(self._current_doc.current_path) or ""
+            parsed = RxParser().parse_text(text) if text.strip() else []
+            if parsed:
+                patient = parsed[0].patient
+                if not prefill.get("last_name") and (patient.last_name or "").strip():
+                    prefill["last_name"] = patient.last_name.strip()
+                if not prefill.get("first_name") and (patient.first_name or "").strip():
+                    prefill["first_name"] = patient.first_name.strip()
+                if (not prefill.get("last_name") or not prefill.get("first_name")) and (patient.full_name or "").strip():
+                    p_last, p_first = _split_name(patient.full_name)
+                    if not prefill.get("last_name") and p_last:
+                        prefill["last_name"] = p_last
+                    if not prefill.get("first_name") and p_first:
+                        prefill["first_name"] = p_first
+
+                if not prefill.get("dob") and (patient.dob or "").strip():
+                    prefill["dob"] = patient.dob.strip().replace("-", "/")
+                if (patient.phone or "").strip():
+                    prefill["phone"] = patient.phone.strip()
+                if (patient.gender or "").strip():
+                    prefill["gender"] = patient.gender.strip()
+                if (patient.address or "").strip():
+                    prefill["address"] = patient.address.strip()
+                if (patient.city or "").strip():
+                    prefill["city"] = patient.city.strip()
+                if (patient.state or "").strip():
+                    prefill["state"] = patient.state.strip()
+                if (patient.zip_code or "").strip():
+                    prefill["zip"] = patient.zip_code.strip()
+        except Exception as e:
+            logger.debug("RX prefill parse skipped: %s", e)
+
+        return prefill
+
+    def _open_new_patient_profile(self, initial_name: str = "", prefill: dict | None = None) -> bool:
+        """Open the host app's patient creation flow from triage.
+
+        Returns True if a create-profile flow was launched and should be followed
+        by another link attempt.
+        """
+        parent = self.parent()
+        while parent is not None:
+            try:
+                if hasattr(parent, "open_quick_add_patient_dialog"):
+                    parent.open_quick_add_patient_dialog(prefill=(prefill or {}), initial_name=initial_name)
+                    return True
+                if hasattr(parent, "add_new_patient"):
+                    parent.add_new_patient()
+                    return True
+            except Exception as e:
+                QMessageBox.warning(self, "Create Patient", f"Could not open patient profile form:\n{e}")
+                return False
+            parent = parent.parent()
+
+        QMessageBox.information(
+            self,
+            "Create Patient",
+            "Patient creation form is not available in this view.",
+        )
+        return False
+
+    def _create_order(self):
+        """Create a new order for the linked patient from the current document."""
+        if not self._current_doc or self._current_doc.patient_id is None:
+            return
+        
+        # Fetch patient details to pre-fill the wizard
+        patient_context = {'patient_id': self._current_doc.patient_id}
+        try:
+            from dmelogic.db.patients import fetch_patient_by_id
+            row = fetch_patient_by_id(self._current_doc.patient_id)
+            if row is not None:
+                d = dict(row)
+                # Pre-fill patient name as "LAST, FIRST"
+                last = (d.get("last_name") or "").strip()
+                first = (d.get("first_name") or "").strip()
+                if last or first:
+                    patient_context['name'] = ", ".join(p for p in (last, first) if p)
+                # Pre-fill DOB if available (column name is 'dob', not 'date_of_birth')
+                if d.get("dob"):
+                    patient_context['dob'] = d.get("dob")
+                # Pre-fill phone if available
+                if d.get("phone"):
+                    patient_context['phone'] = d.get("phone")
+        except Exception:
+            pass  # If patient lookup fails, at least pass the patient_id
+        
+        # Find the main window (parent chain)
+        parent = self.parent()
+        while parent is not None:
+            if hasattr(parent, 'open_new_order_wizard'):
+                # Pass patient context to the wizard
+                parent.open_new_order_wizard(
+                    patient_context=patient_context
+                )
+                break
+            parent = parent.parent()
 
     def _manage_buckets(self):
         dlg = BucketManagerDialog(self.svc.store, self)

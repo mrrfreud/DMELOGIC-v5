@@ -17,6 +17,9 @@ picks up this look automatically.
 
 from __future__ import annotations
 
+from PyQt6.QtCore import QEvent, QObject, QTimer
+from PyQt6.QtWidgets import QDialog, QFormLayout, QLabel
+
 
 # ── design tokens ───────────────────────────────────────────────────────
 class _Light:
@@ -66,6 +69,106 @@ class _Dark:
 
 
 _FONT = "'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif"
+
+
+def _iter_form_layouts(root_layout):
+    """Yield every QFormLayout under a root layout (depth-first)."""
+    if root_layout is None:
+        return
+
+    if isinstance(root_layout, QFormLayout):
+        yield root_layout
+
+    for i in range(root_layout.count()):
+        item = root_layout.itemAt(i)
+        if item is None:
+            continue
+        child_layout = item.layout()
+        if child_layout is not None:
+            yield from _iter_form_layouts(child_layout)
+
+
+def _fit_dialog_form_labels(dialog: QDialog) -> None:
+    """Ensure dialog form labels are visible at open, even on higher DPI/font scales."""
+    if dialog is None or dialog.layout() is None:
+        return
+
+    changed = False
+
+    for form in _iter_form_layouts(dialog.layout()):
+        max_label_width = 0
+        labels = []
+
+        for row in range(form.rowCount()):
+            label_item = form.itemAt(row, QFormLayout.ItemRole.LabelRole)
+            if label_item is None:
+                continue
+            label_widget = label_item.widget()
+            if label_widget is None:
+                continue
+
+            labels.append(label_widget)
+
+            hint = label_widget.sizeHint()
+            if hint.width() > max_label_width:
+                max_label_width = hint.width()
+
+        if not labels or max_label_width <= 0:
+            continue
+
+        target_label_width = max_label_width + 16
+
+        for lbl in labels:
+            if isinstance(lbl, QLabel):
+                lbl.setWordWrap(False)
+            if lbl.minimumWidth() < target_label_width:
+                lbl.setMinimumWidth(target_label_width)
+                changed = True
+
+        try:
+            if form.horizontalSpacing() < 12:
+                form.setHorizontalSpacing(12)
+        except Exception:
+            pass
+
+    if not changed:
+        return
+
+    try:
+        dialog.layout().activate()
+    except Exception:
+        pass
+
+    target_width = max(dialog.width(), dialog.sizeHint().width())
+    try:
+        screen = dialog.screen()
+        if screen is not None:
+            max_width = int(screen.availableGeometry().width() * 0.92)
+            target_width = min(target_width, max_width)
+    except Exception:
+        pass
+
+    if target_width > dialog.width():
+        dialog.resize(target_width, dialog.height())
+
+
+class _DialogLabelFitFilter(QObject):
+    """Run form-label auto-fit once for each dialog the first time it is shown."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._fitted = set()
+
+    def eventFilter(self, obj, event):  # noqa: N802 (Qt API)
+        if event.type() == QEvent.Type.Show and isinstance(obj, QDialog):
+            wid = id(obj)
+            if wid not in self._fitted:
+                self._fitted.add(wid)
+                QTimer.singleShot(0, lambda d=obj: _fit_dialog_form_labels(d))
+        return False
+
+
+_dialog_label_fit_filter: _DialogLabelFitFilter | None = None
 
 
 def _build_qss(c) -> str:
@@ -274,6 +377,15 @@ def apply_modern_theme(app, dark: bool = False) -> None:
         app.setFont(f)
     except Exception:
         pass
+
+    # Keep dialogs readable on open by auto-fitting form labels globally.
+    global _dialog_label_fit_filter
+    _dialog_label_fit_filter = _DialogLabelFitFilter(app)
+    app.installEventFilter(_dialog_label_fit_filter)
+
+    for widget in app.topLevelWidgets():
+        if isinstance(widget, QDialog):
+            _fit_dialog_form_labels(widget)
 
 
 # Expose the palette so individual screens can match (chips, accents, etc.).

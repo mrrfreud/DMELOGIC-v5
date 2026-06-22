@@ -27,6 +27,8 @@ WIA_FORMAT_BMP = "{B96B3CAB-0728-11D3-9D7B-0000F81EF32E}"
 WIA_FORMAT_JPEG = "{B96B3CAE-0728-11D3-9D7B-0000F81EF32E}"
 WIA_FORMAT_TIFF = "{B96B3CB1-0728-11D3-9D7B-0000F81EF32E}"
 WIA_FORMAT_PDF = "{D3CB2BF4-11A9-43C4-9B62-04E1CE28E8B8}"
+WIA_DPS_DOCUMENT_HANDLING_SELECT = 3088
+WIA_FEEDER = 1
 
 # Scanner mode constants
 MODE_AUTO = "Auto"
@@ -60,6 +62,16 @@ def _load_scanner_settings() -> dict:
         "scanner_device_id": "", "scan_format": "PDF", "scan_folder": "",
         "scanner_mode": MODE_AUTO, "scanner_app_path": "", "scanner_output_folder": "",
     }
+
+
+def _has_wia_runtime() -> bool:
+    """Return True when WIA runtime dependencies are available."""
+    try:
+        import win32com.client  # noqa: F401
+        import pythoncom  # noqa: F401
+        return True
+    except Exception:
+        return False
 
 
 def scan_document(
@@ -297,7 +309,8 @@ def _scan_via_wia(
                     except Exception:
                         pass
 
-                _show_error(parent_widget, "Scanner is busy or offline.\n\nClose any other scan app using the device, then try again.")
+                if not quiet_no_scanner:
+                    _show_error(parent_widget, "Scanner is busy or offline.\n\nClose any other scan app using the device, then try again.")
                 return None
 
             logger.error(f"Scan failed: {e}")
@@ -344,6 +357,85 @@ def _save_scanned_image(image, suggested_name: str, save_folder: Path, as_pdf: b
     return filename
 
 
+def _save_wia_image_to_path(image, save_path: Path) -> bool:
+    """Save a WIA ImageFile to an exact path."""
+    try:
+        if save_path.exists():
+            save_path.unlink()
+        image.SaveFile(str(save_path))
+        return True
+    except Exception as e:
+        logger.warning(f"Failed to save WIA page {save_path}: {e}")
+        return False
+
+
+def _combine_images_to_pdf(image_paths: list[Path], pdf_path: Path) -> bool:
+    """Combine scanned image pages into a single PDF."""
+    if not image_paths:
+        return False
+
+    try:
+        import fitz
+
+        doc = fitz.open()
+        for image_path in image_paths:
+            img_doc = fitz.open(str(image_path))
+            rect = img_doc[0].rect
+            page = doc.new_page(width=rect.width, height=rect.height)
+            page.insert_image(rect, filename=str(image_path))
+            img_doc.close()
+        doc.save(str(pdf_path))
+        doc.close()
+        return True
+    except Exception as e:
+        logger.warning(f"PyMuPDF image merge failed: {e}")
+
+    try:
+        from PIL import Image
+
+        opened = []
+        try:
+            for image_path in image_paths:
+                img = Image.open(str(image_path))
+                if img.mode in ("RGBA", "P"):
+                    img = img.convert("RGB")
+                opened.append(img)
+
+            if not opened:
+                return False
+            first, rest = opened[0], opened[1:]
+            first.save(str(pdf_path), "PDF", save_all=True, append_images=rest)
+            return True
+        finally:
+            for img in opened:
+                try:
+                    img.close()
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.warning(f"Pillow image merge failed: {e}")
+        return False
+
+
+def _set_wia_property_value(wia_object, property_id: int, value) -> bool:
+    try:
+        properties = getattr(wia_object, "Properties", None)
+        if properties is None:
+            return False
+        for idx in range(1, properties.Count + 1):
+            prop = properties.Item(idx)
+            if int(getattr(prop, "PropertyID", 0)) == property_id:
+                prop.Value = value
+                return True
+    except Exception as e:
+        logger.debug(f"Unable to set WIA property {property_id}: {e}")
+    return False
+
+
+def _prefer_wia_feeder(device) -> None:
+    _set_wia_property_value(device, WIA_DPS_DOCUMENT_HANDLING_SELECT, WIA_FEEDER)
+
+
 # ---------------------------------------------------------------------------
 #  File-picker scanning (for ScanSnap, etc.)
 # ---------------------------------------------------------------------------
@@ -381,12 +473,14 @@ def _scan_via_file_picker(
     scanner_app = cfg.get("scanner_app_path", "")
     output_folder = cfg.get("scanner_output_folder", "")
 
-    # Determine the folder to watch for new scans
-    watch_folder = Path(output_folder) if output_folder else None
+    # Determine the folder to watch for new scans. If no scanner-output folder
+    # is configured, watch the save destination so Brother/iPrint & Scan can
+    # still save directly into the order's document folder.
+    watch_folder = Path(output_folder) if output_folder else save_folder
     if watch_folder and not watch_folder.exists():
-        watch_folder = None
+        watch_folder = save_folder if save_folder.exists() else None
 
-    # If no scanner app or output folder configured, go straight to file picker
+    # If no usable watch folder exists, go straight to file picker.
     if not scanner_app and not watch_folder:
         return _simple_file_picker(parent_widget, suggested_name, save_folder, as_pdf)
 
@@ -422,15 +516,15 @@ def _scan_via_file_picker(
         msg = (
             "Your scanner software has been launched.\n\n"
             "1. Scan your document using the scanner\n"
-            "2. Wait for scanning to complete\n"
-            "3. Click 'Done Scanning' below"
+            f"2. Save the scan to:\n{watch_folder}\n"
+            "3. Wait for scanning to complete\n"
+            "4. Click 'Done Scanning' below"
         )
     else:
         msg = (
-            "Press the Scan button on your scanner,\n"
-            "or scan with your scanner software.\n\n"
-            "When the scan is complete, click\n"
-            "'Done Scanning' below."
+            "Scan with your scanner software.\n\n"
+            f"Save the scan to:\n{watch_folder}\n\n"
+            "When the scan is complete, click 'Done Scanning' below."
         )
 
     label = QLabel(msg)
@@ -729,7 +823,7 @@ def scan_batch_document(
 
     * **WIA** — acquires directly through Windows Image Acquisition.  If the
       scanner is busy the user is offered up to *max_wia_attempts* retries.
-    * **Output-folder watch** (ScanSnap, etc.) — shows a "press Scan, then
+        * **Output-folder watch** (Brother iPrint & Scan, ScanSnap, etc.) — shows a "press Scan, then
       Done" dialog and detects the newest file in the configured output folder.
       If nothing new is found the user is told to retry; no generic file
       picker is shown.
@@ -751,6 +845,7 @@ def scan_batch_document(
         save_folder = delivery_tickets_folder()
     save_folder = _Path(save_folder)
     save_folder.mkdir(parents=True, exist_ok=True)
+    fallback_output_folder = output_folder_str or str(save_folder)
 
     # For batch jobs in Auto mode, prefer output-folder acquisition when it is
     # configured. This captures scanners that emit one file per page.
@@ -759,23 +854,42 @@ def scan_batch_document(
         or (mode == MODE_AUTO and not output_folder_str)
     )
 
+    # Graceful handling for environments without pywin32/WIA runtime.
+    if use_wia and not _has_wia_runtime():
+        if output_folder_str:
+            return _batch_acquire_via_output_folder(
+                parent_widget, save_folder, suggested_name, scanner_app, output_folder_str
+            )
+        return None, (
+            "WIA scanning is unavailable because pywin32 is not installed.\n\n"
+            "Use \"Use existing files\" in Batch Delivery OCR, or configure "
+            "Settings → Scanner → Output Folder for scanner-mode capture."
+        )
+
     if use_wia:
+        wia_attempts = 1 if mode == MODE_AUTO else max_wia_attempts
         scanned_path, error_msg = _batch_acquire_via_wia(
-            parent_widget, save_folder, suggested_name, device_id, max_wia_attempts
+            parent_widget, save_folder, suggested_name, device_id, wia_attempts
         )
         if scanned_path is not None:
             return scanned_path, ""
-        # In Auto mode, some scanners intermittently report false WIA "busy"
-        # states. If output-folder capture is configured, fall back to it.
-        if mode == MODE_AUTO and output_folder_str:
+        # Brother's WIA driver can report "device busy" even when the scanner is
+        # idle. In Auto mode, fall back to the scanner-app folder workflow so the
+        # user can scan from Brother iPrint & Scan and keep OCR auto-attach.
+        if mode == MODE_AUTO:
             return _batch_acquire_via_output_folder(
-                parent_widget, save_folder, suggested_name, scanner_app, output_folder_str
+                parent_widget,
+                save_folder,
+                suggested_name,
+                scanner_app,
+                fallback_output_folder,
+                wia_error=error_msg,
             )
         return None, error_msg
 
     # Output-folder / scanner-app path (ScanSnap-style) — no generic picker.
     return _batch_acquire_via_output_folder(
-        parent_widget, save_folder, suggested_name, scanner_app, output_folder_str
+        parent_widget, save_folder, suggested_name, scanner_app, fallback_output_folder
     )
 
 
@@ -786,44 +900,185 @@ def _batch_acquire_via_wia(
     device_id: str,
     max_attempts: int,
 ) -> "tuple[Path | None, str]":
-    """WIA acquisition with retry loop for busy conditions."""
+    """WIA acquisition with repeated ADF transfers for true batch scanning."""
+    import tempfile
+    from datetime import datetime as _dt
     from pathlib import Path as _Path
+
+    try:
+        import win32com.client
+        import pythoncom
+    except ImportError:
+        return None, "pywin32 is not installed."
+
+    def _connect_device():
+        manager = win32com.client.Dispatch("WIA.DeviceManager")
+        if device_id:
+            for i in range(1, manager.DeviceInfos.Count + 1):
+                info = manager.DeviceInfos.Item(i)
+                if info.DeviceID == device_id:
+                    return info.Connect()
+            raise RuntimeError("Configured scanner not found. Refresh scanner list in Settings.")
+
+        if manager.DeviceInfos.Count == 0:
+            raise RuntimeError("No WIA scanner found.")
+        if manager.DeviceInfos.Count == 1:
+            return manager.DeviceInfos.Item(1).Connect()
+
+        dialog = win32com.client.Dispatch("WIA.CommonDialog")
+        selected = dialog.ShowSelectDevice(1, True, False)
+        if selected is None:
+            raise RuntimeError("Scanner selection cancelled.")
+        return selected
+
+    def _is_feeder_done(error_text: str) -> bool:
+        lower = error_text.lower()
+        return any(
+            token in lower
+            for token in (
+                "paper",
+                "feeder",
+                "empty",
+                "no documents",
+                "document feeder",
+                "0x80210003",
+                "0x8021000c",
+                "-2145320957",
+                "-2145320948",
+            )
+        )
+
+    def _is_wia_busy(error_text: str) -> bool:
+        lower = error_text.lower()
+        return any(
+            token in lower
+            for token in (
+                "0x80210006",
+                "-2145320954",
+                "-2147352567",
+                "wia device is busy",
+                "busy",
+            )
+        )
+
+    def _show_dialog_acquire_batch(temp_dir: _Path) -> list[_Path]:
+        dialog = win32com.client.Dispatch("WIA.CommonDialog")
+        dialog_pages: list[_Path] = []
+        for page_no in range(1, 101):
+            try:
+                image = dialog.ShowAcquireImage()
+            except Exception as dialog_error:
+                error_text = str(dialog_error)
+                if dialog_pages or _is_feeder_done(error_text) or "cancel" in error_text.lower():
+                    break
+                raise
+
+            if image is None:
+                break
+
+            page_path = temp_dir / f"dialog_page_{page_no:03d}.png"
+            if _save_wia_image_to_path(image, page_path):
+                dialog_pages.append(page_path)
+            else:
+                break
+        return dialog_pages
 
     last_error = ""
     for attempt in range(max_attempts):
-        scanned_name = _scan_via_wia(
-            parent_widget=parent_widget,
-            suggested_name=suggested_name,
-            save_folder=save_folder,
-            as_pdf=True,
-            device_id=device_id or None,
-            quiet_no_scanner=False,
-        )
-        if scanned_name:
-            p = save_folder / scanned_name
-            return p, ""
+        temp_dir = _Path(tempfile.mkdtemp(prefix="dme_wia_batch_"))
+        page_paths: list[_Path] = []
+        device = None
+        item = None
+        image = None
 
-        # Distinguish user-cancel (no dialog shown) from busy/error
+        try:
+            pythoncom.CoInitialize()
+            try:
+                device = _connect_device()
+            except Exception as connect_error:
+                error_text = str(connect_error)
+                if _is_wia_busy(error_text):
+                    logger.info("WIA device connect reported busy; trying WIA acquisition dialog.")
+                    page_paths = _show_dialog_acquire_batch(temp_dir)
+                else:
+                    raise
+
+            if device is not None:
+                _prefer_wia_feeder(device)
+                item = device.Items(1)
+
+                for page_no in range(1, 101):
+                    try:
+                        image = item.Transfer(WIA_FORMAT_PNG)
+                    except Exception as page_error:
+                        error_text = str(page_error)
+                        if not page_paths and _is_wia_busy(error_text):
+                            logger.info("Direct WIA batch transfer reported busy; trying WIA acquisition dialog.")
+                            page_paths = _show_dialog_acquire_batch(temp_dir)
+                            break
+                        if page_paths or _is_feeder_done(error_text):
+                            break
+                        raise
+
+                    if image is None:
+                        break
+
+                    page_path = temp_dir / f"page_{page_no:03d}.png"
+                    if _save_wia_image_to_path(image, page_path):
+                        page_paths.append(page_path)
+
+            if not page_paths:
+                last_error = "Scanner did not return any pages."
+            else:
+                timestamp = _dt.now().strftime("%m-%d-%Y_%H%M%S")
+                base = suggested_name.rstrip(".") or f"Batch_{timestamp}"
+                dest = save_folder / f"{base}.pdf"
+                counter = 1
+                while dest.exists():
+                    dest = save_folder / f"{base}_{counter}.pdf"
+                    counter += 1
+
+                if _combine_images_to_pdf(page_paths, dest):
+                    logger.info(f"WIA batch scan saved {len(page_paths)} page(s): {dest}")
+                    return dest, ""
+                last_error = "Scanned pages were captured but could not be combined into a PDF."
+        except Exception as e:
+            error_text = str(e)
+            if "cancel" in error_text.lower():
+                return None, ""
+            last_error = error_text
+        finally:
+            image = None
+            item = None
+            device = None
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception:
+                pass
+
         if attempt < max_attempts - 1:
             try:
                 from PyQt6.QtWidgets import QMessageBox
                 retry = QMessageBox.question(
                     parent_widget,
                     "Scanner Busy",
-                    "Scanner did not return a document.\n\n"
-                    "Make sure no other scan app is using the device,\n"
-                    f"then click Retry to try again. ({attempt + 1}/{max_attempts})",
+                    "Scanner did not return the batch.\n\n"
+                    "Make sure pages are loaded in the feeder and no other scan app is using the device,\n"
+                    f"then click Retry to try again. ({attempt + 1}/{max_attempts})\n\n"
+                    f"Last error: {last_error}",
                     QMessageBox.StandardButton.Retry | QMessageBox.StandardButton.Cancel,
                     QMessageBox.StandardButton.Retry,
                 )
                 if retry != QMessageBox.StandardButton.Retry:
-                    return None, ""  # user cancelled
+                    return None, ""
             except Exception:
                 break
-        else:
-            last_error = "Scanner did not return a document after multiple attempts."
 
-    return None, last_error
+    return None, last_error or "Scanner did not return a document after multiple attempts."
 
 
 def _batch_acquire_via_output_folder(
@@ -832,6 +1087,7 @@ def _batch_acquire_via_output_folder(
     suggested_name: str,
     scanner_app: str,
     output_folder_str: str,
+    wia_error: str = "",
 ) -> "tuple[Path | None, str]":
     """Output-folder watch acquisition for ScanSnap-style scanners.
 
@@ -900,21 +1156,30 @@ def _batch_acquire_via_output_folder(
         dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
         layout = QVBoxLayout(dlg)
 
+        folder_text = str(watch_folder)
+        wia_note = ""
+        if wia_error:
+            wia_note = (
+                "WIA did not return a scan, so DMELogic is using scanner-app capture.\n\n"
+            )
+
         if app_launched:
             msg_text = (
-                "Your scanner software has been launched.\n\n"
+                f"{wia_note}Your scanner software has been launched.\n\n"
                 "1. Place your delivery tickets face-down in the feeder\n"
                 "2. Press Scan in the scanner software\n"
-                "3. Wait for all pages to finish scanning\n"
-                "4. Click  ✅ Done Scanning  below"
+                f"3. Save the scan to:\n{folder_text}\n"
+                "4. Wait for all pages to finish scanning\n"
+                "5. Click Done Scanning below"
             )
         else:
             msg_text = (
-                "Ready to scan a batch of delivery tickets.\n\n"
+                f"{wia_note}Ready to scan a batch of delivery tickets.\n\n"
                 "1. Place your delivery tickets face-down in the feeder\n"
-                "2. Press the Scan button on your scanner\n"
-                "3. Wait for all pages to finish scanning\n"
-                "4. Click  ✅ Done Scanning  below"
+                "2. Scan with Brother iPrint & Scan\n"
+                f"3. Save the scan to:\n{folder_text}\n"
+                "4. Wait for all pages to finish scanning\n"
+                "5. Click Done Scanning below"
             )
 
         lbl = QLabel(msg_text)
@@ -922,8 +1187,7 @@ def _batch_acquire_via_output_folder(
         layout.addWidget(lbl)
 
         note = QLabel(
-            "⚠ Do not use 'Pick File' — this is scanner-mode only.\n"
-            "Files are auto-detected from your scanner output folder."
+            "DMELogic auto-detects new PDF/image files in this folder and sends them to Batch Delivery OCR."
         )
         note.setStyleSheet("font-size: 11px; color: #888; padding: 4px 10px;")
         layout.addWidget(note)

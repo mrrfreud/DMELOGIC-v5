@@ -73,6 +73,7 @@ DEFAULT_PERMISSIONS = [
     
     # Reports
     "reports.view",
+    "reports.view_billing",
     "reports.export",
     
     # OCR/Documents
@@ -97,7 +98,7 @@ DEFAULT_ROLES = {
         "billing.view", "billing.export_epaces", "billing.generate_1500", "billing.edit_claims",
         "patients.view", "patients.add", "patients.edit",
         "prescribers.view", "prescribers.add", "prescribers.edit",
-        "reports.view", "reports.export",
+        "reports.view", "reports.view_billing", "reports.export",
         "documents.view", "documents.upload",
         "settings.view",
     ],
@@ -108,7 +109,7 @@ DEFAULT_ROLES = {
         "patients.view",
         "prescribers.view",
         "financial.view",
-        "reports.view",
+        "reports.view", "reports.view_billing",
         "documents.view",
     ],
     
@@ -349,6 +350,98 @@ def ensure_admin_user(folder_path: Optional[str] = None) -> bool:
     return False
 
 
+def get_user_count(folder_path: Optional[str] = None) -> int:
+    """Return total number of users in users.db."""
+    conn = get_connection(folder_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) as cnt FROM users")
+    count = int(cursor.fetchone()["cnt"])
+    conn.close()
+    return count
+
+
+def reset_or_create_admin_user(
+    folder_path: Optional[str] = None,
+    *,
+    username: str = "admin",
+    display_name: str = "Administrator",
+    new_password: str = "admin123",
+    force_password_change: bool = True,
+) -> Tuple[bool, Dict[str, Any]]:
+    """
+    Recovery helper for login issues.
+
+    Ensures auth schema and default roles exist, then either resets the existing
+    admin account password or creates a fresh admin account when missing.
+
+    Returns:
+        (created_new_user, user_dict)
+    """
+    init_users_db(folder_path)
+    seed_default_roles_and_permissions(folder_path)
+
+    conn = get_connection(folder_path)
+    cursor = conn.cursor()
+
+    now = datetime.now().isoformat()
+    password_hash = hash_password(new_password)
+
+    cursor.execute("SELECT * FROM users WHERE LOWER(username) = LOWER(?)", (username,))
+    user_row = cursor.fetchone()
+
+    created = False
+    if user_row:
+        user_id = int(user_row["id"])
+        resolved_username = str(user_row["username"])
+        resolved_display_name = str(user_row["display_name"] or display_name)
+        cursor.execute(
+            """
+            UPDATE users
+            SET display_name = ?,
+                password_hash = ?,
+                is_active = 1,
+                force_password_change = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (resolved_display_name, password_hash, int(force_password_change), now, user_id),
+        )
+    else:
+        created = True
+        resolved_username = username
+        resolved_display_name = display_name
+        cursor.execute(
+            """
+            INSERT INTO users (
+                username, display_name, password_hash,
+                is_active, is_agent, force_password_change,
+                created_at, updated_at
+            )
+            VALUES (?, ?, ?, 1, 0, ?, ?, ?)
+            """,
+            (resolved_username, resolved_display_name, password_hash, int(force_password_change), now, now),
+        )
+        user_id = int(cursor.lastrowid)
+
+    cursor.execute("SELECT id FROM roles WHERE name = ?", ("Admin",))
+    admin_role = cursor.fetchone()
+    if admin_role:
+        cursor.execute(
+            "INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)",
+            (user_id, int(admin_role["id"])),
+        )
+
+    conn.commit()
+    conn.close()
+
+    return created, {
+        "id": user_id,
+        "username": resolved_username,
+        "display_name": resolved_display_name,
+        "force_password_change": int(force_password_change),
+    }
+
+
 # =============================================================================
 # Password Hashing
 # =============================================================================
@@ -379,7 +472,7 @@ def get_user_by_username(username: str, folder_path: Optional[str] = None) -> Op
     """Get user by username"""
     conn = get_connection(folder_path)
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
+    cursor.execute("SELECT * FROM users WHERE LOWER(username) = LOWER(?)", (username,))
     row = cursor.fetchone()
     conn.close()
     return dict(row) if row else None

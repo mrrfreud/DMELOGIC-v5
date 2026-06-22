@@ -147,6 +147,16 @@ def delivery_tickets_folder() -> Path:
     return data_subdir("DeliveryTickets")
 
 
+def delivery_ticket_triage_folder() -> Path:
+    """Brother batch delivery-ticket scan input folder."""
+    return data_subdir("DT-TRIAGE")
+
+
+def delivery_ticket_split_folder() -> Path:
+    """Individual signed delivery tickets split from Brother batch scans."""
+    return data_subdir("DELIVERY TICKETS")
+
+
 def fax_packets_dir() -> Path:
     return data_subdir("FaxPackets")
 
@@ -218,6 +228,7 @@ def resolve_document_path(filename_or_path: str) -> Path:
 
     root = ocr_folder()
     delivery_root = delivery_tickets_folder()
+    split_delivery_root = delivery_ticket_split_folder()
     base = p.name
 
     candidates: list[Path] = []
@@ -226,6 +237,7 @@ def resolve_document_path(filename_or_path: str) -> Path:
     if base:
         candidates.append(root / base)
         candidates.append(delivery_root / base)
+        candidates.append(split_delivery_root / base)
 
     seen: set[str] = set()
     for candidate in candidates:
@@ -237,7 +249,7 @@ def resolve_document_path(filename_or_path: str) -> Path:
             return candidate
 
     if base:
-        for search_root in (root, delivery_root):
+        for search_root in (root, delivery_root, split_delivery_root):
             try:
                 for match in search_root.rglob(base):
                     if match.is_file():

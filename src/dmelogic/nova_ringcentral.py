@@ -1383,8 +1383,46 @@ def send_refill_fax(
         else:
             c.drawString(0.5 * inch, text_y, "Please issue new prescriptions at your earliest convenience.")
 
+        # MD approval instructions (refill form only)
+        if not is_new_request:
+            text_y -= 0.24 * inch
+            instruction_title_y = text_y
+            instruction_line_height = 0.22 * inch
+            instruction_text_x = 0.6 * inch
+            instruction_title_gap = 0.24 * inch
+            instruction_box_top_padding = 0.16 * inch
+            instruction_box_bottom_padding = 0.14 * inch
+            instruction_lines = [
+                ("Helvetica-Bold", 9, "Please send new prescriptions via EMR or fill, sign and fax form back to approve refills."),
+                ("Helvetica", 9, "1. Check the box next to each item you are approving for refill."),
+                ("Helvetica", 9, "2. Write in how many refills you are ordering next to each item."),
+                ("Helvetica", 9, "3. Sign and date below, then fax this completed form back to us at 347-947-8102."),
+                ("Helvetica", 9, "   This signed fax will serve as the new prescription."),
+            ]
+            instruction_box_top = instruction_title_y + instruction_box_top_padding
+            instruction_box_bottom = (
+                instruction_title_y
+                - instruction_title_gap
+                - (len(instruction_lines) * instruction_line_height)
+                - instruction_box_bottom_padding
+            )
+            c.setLineWidth(0.5)
+            c.rect(0.5 * inch, instruction_box_bottom, width - 1.0 * inch, instruction_box_top - instruction_box_bottom)
+
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(instruction_text_x, text_y, "INSTRUCTIONS FOR PRESCRIBER:")
+            text_y -= instruction_title_gap
+            for font_name, font_size, ln in instruction_lines:
+                c.setFont(font_name, font_size)
+                c.drawString(instruction_text_x, text_y, ln)
+                text_y -= instruction_line_height
+
         # Items table
-        text_y -= 0.3 * inch
+        if not is_new_request:
+            # Keep a consistent visual gap below the instruction box.
+            text_y = instruction_box_bottom - 0.22 * inch
+        else:
+            text_y -= 0.2 * inch
         c.setFont("Helvetica-Bold", 10)
         if is_new_request:
             c.drawString(0.5 * inch, text_y, "REQUESTED ITEMS (Monthly Usage):")
@@ -1393,15 +1431,35 @@ def send_refill_fax(
         text_y -= 0.05 * inch
         c.line(0.5 * inch, text_y, width - 0.5 * inch, text_y)
         text_y -= 0.2 * inch
+        refill_row_height = 0.26 * inch
 
-        for desc, qty, hcpcs, refills_rem in request_items:
+        for item_num, (desc, qty, hcpcs, refills_rem) in enumerate(request_items, start=1):
             c.setFont("Helvetica", 10)
-            c.drawString(0.6 * inch, text_y, f"-  {desc}")
             if is_new_request:
+                c.drawString(0.6 * inch, text_y, f"{item_num}.  {desc}")
                 c.drawRightString(width - 0.5 * inch, text_y, f"Qty/Month: {qty}")
+                text_y -= 0.18 * inch
             else:
-                c.drawRightString(width - 0.5 * inch, text_y, f"Qty: {qty} (Refills: {refills_rem})")
-            text_y -= 0.18 * inch
+                # Checkbox placeholder (square), item number, description
+                c.rect(0.5 * inch, text_y - 0.01 * inch, 0.13 * inch, 0.13 * inch)
+                c.drawString(0.7 * inch, text_y, f"{item_num}.  {desc}")
+                c.drawRightString(width - 0.5 * inch, text_y,
+                                  f"Qty: {qty}  |  Refills Left: {refills_rem}  |  Refills to order: __________")
+                text_y -= refill_row_height
+
+        # "Approve ALL" shortcut row (refill form only)
+        if not is_new_request and len(request_items) > 1:
+            text_y -= 0.05 * inch
+            c.setLineWidth(0.25)
+            c.setDash(3, 3)
+            c.line(0.5 * inch, text_y + 0.14 * inch, width - 0.5 * inch, text_y + 0.14 * inch)
+            c.setDash()
+            c.setLineWidth(0.5)
+            c.rect(0.5 * inch, text_y - 0.01 * inch, 0.13 * inch, 0.13 * inch)
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(0.7 * inch, text_y, "Approve ALL items listed above")
+            c.drawRightString(width - 0.5 * inch, text_y, "Refills (all items): __________")
+            text_y -= refill_row_height
 
         # Diagnosis codes (only on refill form)
         if (not is_new_request) and dx_codes:
@@ -1413,8 +1471,32 @@ def send_refill_fax(
             c.drawString(0.6 * inch, text_y, "  ".join(dx_codes))
             text_y -= 0.25 * inch
 
+        # MD approval signature block (refill form only)
+        if not is_new_request:
+            text_y -= 0.15 * inch
+            c.line(0.5 * inch, text_y, width - 0.5 * inch, text_y)
+            text_y -= 0.18 * inch
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(0.5 * inch, text_y, "PRESCRIBER APPROVAL — please sign below and fax back to 347-947-8102")
+            text_y -= 0.35 * inch
+            # Signature line (left 3/4)
+            sig_end = 0.5 * inch + 4.5 * inch
+            c.line(0.5 * inch, text_y, sig_end, text_y)
+            # Date line (right 1/4)
+            c.line(sig_end + 0.2 * inch, text_y, width - 0.5 * inch, text_y)
+            text_y -= 0.14 * inch
+            c.setFont("Helvetica", 8)
+            c.drawString(0.5 * inch, text_y, "Prescriber Signature")
+            c.drawString(sig_end + 0.2 * inch, text_y, "Date (MM/DD/YYYY)")
+            text_y -= 0.28 * inch
+            # Printed name / NPI line (full width)
+            c.line(0.5 * inch, text_y, width - 0.5 * inch, text_y)
+            text_y -= 0.14 * inch
+            c.drawString(0.5 * inch, text_y, "Printed Name & NPI")
+            text_y -= 0.3 * inch
+
         # Sign off
-        text_y -= 0.1 * inch
+        text_y -= 0.05 * inch
         c.line(0.5 * inch, text_y, width - 0.5 * inch, text_y)
         text_y -= 0.2 * inch
         c.setFont("Helvetica", 10)

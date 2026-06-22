@@ -35,7 +35,7 @@ class ThemeConfig:
 
 @dataclass(frozen=True)
 class SessionConfig:
-    idle_timeout_minutes: int = 15
+    idle_timeout_minutes: int = 60
     failed_login_lockout_attempts: int = 5
     failed_login_lockout_minutes: int = 10
     remember_window_geometry: bool = True

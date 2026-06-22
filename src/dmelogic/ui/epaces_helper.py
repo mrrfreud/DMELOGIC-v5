@@ -170,6 +170,36 @@ class EpacesHelperDialog(QDialog):
 
         self._build_ui()
         self._bind_data()
+        self._auto_fit_initial_size()
+
+    def _configure_value_label(self, label: QLabel) -> QLabel:
+        """Configure dynamic value labels to avoid clipping in narrow layouts."""
+        label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        label.setWordWrap(True)
+        label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        label.setMinimumWidth(160)
+        return label
+
+    def _auto_fit_initial_size(self) -> None:
+        """Widen dialog on open so top-row labels are fully visible."""
+        try:
+            self.layout().activate()
+        except Exception:
+            pass
+
+        required = max(self.minimumSizeHint().width(), self.sizeHint().width())
+        target_width = max(self.width(), required)
+
+        try:
+            screen = self.screen()
+            if screen is not None:
+                max_width = int(screen.availableGeometry().width() * 0.96)
+                target_width = min(target_width, max_width)
+        except Exception:
+            pass
+
+        if target_width > self.width():
+            self.resize(target_width, self.height())
 
     # ------------------------------------------------------------------ UI
 
@@ -188,10 +218,7 @@ class EpacesHelperDialog(QDialog):
         row1 = QHBoxLayout()
         row1.setSpacing(10)  # Increased horizontal spacing
 
-        self.lbl_patient_name = QLabel("")
-        self.lbl_patient_name.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
+        self.lbl_patient_name = self._configure_value_label(QLabel(""))
         row1.addWidget(QLabel("Pt Name:"))
         row1.addWidget(self.lbl_patient_name, 2)
 
@@ -201,10 +228,7 @@ class EpacesHelperDialog(QDialog):
         )
         row1.addWidget(btn_pt)
 
-        self.lbl_primary_member = QLabel("")
-        self.lbl_primary_member.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
+        self.lbl_primary_member = self._configure_value_label(QLabel(""))
         row1.addSpacing(24)
         row1.addWidget(QLabel("Primary Payer Policy #:"))
         row1.addWidget(self.lbl_primary_member, 2)
@@ -221,10 +245,7 @@ class EpacesHelperDialog(QDialog):
         row2 = QHBoxLayout()
         row2.setSpacing(10)  # Increased horizontal spacing
 
-        self.lbl_prescriber = QLabel("")
-        self.lbl_prescriber.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
+        self.lbl_prescriber = self._configure_value_label(QLabel(""))
         row2.addWidget(QLabel("Prescriber:"))
         row2.addWidget(self.lbl_prescriber, 2)
 
@@ -234,10 +255,7 @@ class EpacesHelperDialog(QDialog):
         )
         row2.addWidget(btn_presc)
 
-        self.lbl_npi = QLabel("")
-        self.lbl_npi.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
+        self.lbl_npi = self._configure_value_label(QLabel(""))
         row2.addSpacing(24)
         row2.addWidget(QLabel("NPI #:"))
         row2.addWidget(self.lbl_npi, 2)
@@ -254,10 +272,7 @@ class EpacesHelperDialog(QDialog):
         row2b = QHBoxLayout()
         row2b.setSpacing(10)
 
-        self.lbl_prescriber_2 = QLabel("")
-        self.lbl_prescriber_2.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
+        self.lbl_prescriber_2 = self._configure_value_label(QLabel(""))
         row2b.addWidget(QLabel("Prescriber 2:"))
         row2b.addWidget(self.lbl_prescriber_2, 2)
 
@@ -267,10 +282,7 @@ class EpacesHelperDialog(QDialog):
         )
         row2b.addWidget(btn_presc_2)
 
-        self.lbl_npi_2 = QLabel("")
-        self.lbl_npi_2.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
+        self.lbl_npi_2 = self._configure_value_label(QLabel(""))
         row2b.addSpacing(24)
         row2b.addWidget(QLabel("NPI 2:"))
         row2b.addWidget(self.lbl_npi_2, 2)
@@ -290,10 +302,7 @@ class EpacesHelperDialog(QDialog):
         row3 = QHBoxLayout()
         row3.setSpacing(10)  # Increased horizontal spacing
 
-        self.lbl_primary_ins = QLabel("")
-        self.lbl_primary_ins.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
+        self.lbl_primary_ins = self._configure_value_label(QLabel(""))
         row3.addWidget(QLabel("Primary Payer:"))
         row3.addWidget(self.lbl_primary_ins, 2)
 
@@ -303,10 +312,7 @@ class EpacesHelperDialog(QDialog):
         )
         row3.addWidget(btn_copy_primary_line)
 
-        self.lbl_secondary_ins = QLabel("")
-        self.lbl_secondary_ins.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
+        self.lbl_secondary_ins = self._configure_value_label(QLabel(""))
         row3.addSpacing(24)
         row3.addWidget(QLabel("Secondary Payer:"))
         row3.addWidget(self.lbl_secondary_ins, 2)
@@ -323,10 +329,7 @@ class EpacesHelperDialog(QDialog):
         row3a = QHBoxLayout()
         row3a.setSpacing(10)
 
-        self.lbl_primary_billed_via = QLabel("")
-        self.lbl_primary_billed_via.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
+        self.lbl_primary_billed_via = self._configure_value_label(QLabel(""))
         row3a.addWidget(QLabel("Primary Billed Via:"))
         row3a.addWidget(self.lbl_primary_billed_via, 2)
 
@@ -336,10 +339,7 @@ class EpacesHelperDialog(QDialog):
         )
         row3a.addWidget(btn_copy_primary_billed_via)
 
-        self.lbl_secondary_billed_via = QLabel("")
-        self.lbl_secondary_billed_via.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
+        self.lbl_secondary_billed_via = self._configure_value_label(QLabel(""))
         row3a.addSpacing(24)
         row3a.addWidget(QLabel("Secondary Billed Via:"))
         row3a.addWidget(self.lbl_secondary_billed_via, 2)
@@ -366,31 +366,33 @@ class EpacesHelperDialog(QDialog):
 
         row3b.addWidget(self.chk_bill_primary)
         row3b.addWidget(self.chk_bill_secondary)
+        row3b.addStretch(1)
 
-        self.lbl_billing_payer = QLabel("Primary")
-        self.lbl_billing_payer.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
-        row3b.addSpacing(24)
-        row3b.addWidget(QLabel("Selected:"))
-        row3b.addWidget(self.lbl_billing_payer, 2)
+        header_layout.addLayout(row3b)
+
+        # Row 3c: selected billing payer (separate row to avoid clipping)
+        row3c = QHBoxLayout()
+        row3c.setSpacing(10)
+
+        self.lbl_billing_payer = self._configure_value_label(QLabel("Primary"))
+        selected_lbl = QLabel("Selected:")
+        selected_lbl.setMinimumWidth(72)
+        row3c.addWidget(selected_lbl)
+        row3c.addWidget(self.lbl_billing_payer, 1)
 
         btn_copy_billing_payer = self._make_copy_button(
             "Copy selected billing payer ID",
             lambda: _copy(self._selected_billing_payer_id()),
         )
-        row3b.addWidget(btn_copy_billing_payer)
+        row3c.addWidget(btn_copy_billing_payer)
 
-        header_layout.addLayout(row3b)
+        header_layout.addLayout(row3c)
 
         # Row 4a: Address street
         row_addr_street = QHBoxLayout()
         row_addr_street.setSpacing(10)
 
-        self.lbl_address_street = QLabel("")
-        self.lbl_address_street.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
+        self.lbl_address_street = self._configure_value_label(QLabel(""))
 
         row_addr_street.addWidget(QLabel("Address:"))
         row_addr_street.addWidget(self.lbl_address_street, 1)
@@ -407,10 +409,7 @@ class EpacesHelperDialog(QDialog):
         row_addr_city = QHBoxLayout()
         row_addr_city.setSpacing(10)
 
-        self.lbl_address_city_state = QLabel("")
-        self.lbl_address_city_state.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
+        self.lbl_address_city_state = self._configure_value_label(QLabel(""))
 
         row_addr_city.addWidget(QLabel("City/State:"))
         row_addr_city.addWidget(self.lbl_address_city_state, 1)
@@ -427,10 +426,7 @@ class EpacesHelperDialog(QDialog):
         row_addr_zip = QHBoxLayout()
         row_addr_zip.setSpacing(10)
 
-        self.lbl_address_zip = QLabel("")
-        self.lbl_address_zip.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
+        self.lbl_address_zip = self._configure_value_label(QLabel(""))
 
         row_addr_zip.addWidget(QLabel("ZIP:"))
         row_addr_zip.addWidget(self.lbl_address_zip, 1)
@@ -478,7 +474,9 @@ class EpacesHelperDialog(QDialog):
         vheader.setVisible(True)
         vheader.setSectionsMovable(True)
         vheader.setSectionsClickable(False)
-        vheader.setDefaultSectionSize(42)
+        vheader.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        vheader.setDefaultSectionSize(56)
+        vheader.setMinimumSectionSize(56)
         vheader.sectionMoved.connect(self._on_row_moved)
         vheader.setStyleSheet("""
             QHeaderView::section {
@@ -996,15 +994,15 @@ class EpacesHelperDialog(QDialog):
         Used for ITEM, HCPCS, QTY, AMOUNT, MODS.
         """
         w = QWidget()
-        w.setMinimumHeight(36)  # Ensure cell height accommodates button
+        w.setMinimumHeight(52)  # Ensure two-line text plus Copy button fits.
         h = QHBoxLayout(w)
-        h.setContentsMargins(6, 4, 6, 4)  # Increased horizontal padding
+        h.setContentsMargins(6, 6, 6, 6)
         h.setSpacing(8)  # Increased spacing between label and button
 
         lbl = QLabel(display)
         lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         lbl.setWordWrap(True)
-        lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter)  # Vertical centering
+        lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         h.addWidget(lbl, 1)
 
         btn = self._make_copy_button(tooltip, _make_value_copier(copy_value))
@@ -1024,9 +1022,9 @@ class EpacesHelperDialog(QDialog):
             initial_value: Pre-fill the PA # if already saved
         """
         w = QWidget()
-        w.setMinimumHeight(36)  # Ensure cell height accommodates widgets
+        w.setMinimumHeight(52)
         h = QHBoxLayout(w)
-        h.setContentsMargins(6, 4, 6, 4)  # Increased horizontal padding
+        h.setContentsMargins(6, 6, 6, 6)
         h.setSpacing(8)  # Increased spacing between input and button
 
         edit = QLineEdit()
@@ -1054,6 +1052,14 @@ class EpacesHelperDialog(QDialog):
         h.addStretch(0)  # Allow expansion to right
 
         return w
+
+    def _enforce_items_row_heights(self) -> None:
+        """Auto-size rows to content and enforce minimum readable height."""
+        min_row_height = 56
+        self.items_table.resizeRowsToContents()
+        for row in range(self.items_table.rowCount()):
+            if self.items_table.rowHeight(row) < min_row_height:
+                self.items_table.setRowHeight(row, min_row_height)
 
     def _populate_items_table(self, items: list[OrderItem], pa_overrides: dict[int, str] | None = None) -> None:
         self.items_table.setRowCount(0)
@@ -1124,7 +1130,6 @@ class EpacesHelperDialog(QDialog):
 
             row = self.items_table.rowCount()
             self.items_table.insertRow(row)
-            self.items_table.setRowHeight(row, 42)  # Increased to accommodate widgets fully
 
             description = item.description or ""
 
@@ -1189,6 +1194,8 @@ class EpacesHelperDialog(QDialog):
             grip_item = QTableWidgetItem("⋮⋮")
             grip_item.setToolTip("Drag to reorder")
             self.items_table.setVerticalHeaderItem(row, grip_item)
+
+        self._enforce_items_row_heights()
 
         # Update claim total label + raw copy value
         self._claim_total_raw = f"{claim_total:.2f}"
@@ -1483,6 +1490,7 @@ class EpacesHelperDialog(QDialog):
         if payer_id:
             label = f"{label} (ID: {payer_id})"
         self.lbl_billing_payer.setText(label)
+        self._auto_fit_initial_size()
 
     def _on_bill_primary_toggled(self, checked: bool) -> None:
         if not checked:

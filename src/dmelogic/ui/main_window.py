@@ -181,6 +181,24 @@ def build_orders_tab(self) -> QWidget:
     self.orders_table.setMinimumHeight(100)   # allow table to shrink so bottom bar fits
     main_layout.addWidget(self.orders_table, 10)
 
+    def _open_order_from_double_click(index):
+        if not index or not index.isValid():
+            return
+        if index.column() in (10, 12, 13, 14):
+            return
+        row = index.row()
+        item = self.orders_table.item(row, 0)
+        if not item:
+            return
+        try:
+            order_id = int(self.get_order_id_from_display(item.text()) or 0)
+        except Exception:
+            order_id = 0
+        if order_id > 0:
+            self.open_order_editor(order_id)
+
+    self.orders_table.doubleClicked.connect(_open_order_from_double_click)
+
     # --- Bottom action bar ---
     bottom_frame = QFrame()
     bottom_frame.setObjectName("OrdersSummaryFrame")
@@ -1250,6 +1268,13 @@ class MainWindow(PDFViewer):
         self.action_batch_delivery_ocr.setToolTip("Batch process signed delivery tickets and auto-attach by OCR order number")
         self.action_batch_delivery_ocr.triggered.connect(self._run_batch_delivery_ocr)
         tools_menu.addAction(self.action_batch_delivery_ocr)
+
+        self.action_split_brother_delivery_batch = QAction("Split and Attach Delivery Batch", self)
+        self.action_split_brother_delivery_batch.setToolTip(
+            "Split PDF batches from DT-TRIAGE into OCR-renamed individual delivery tickets"
+        )
+        self.action_split_brother_delivery_batch.triggered.connect(self._run_delivery_ticket_triage_split)
+        tools_menu.addAction(self.action_split_brother_delivery_batch)
         
         # User Administration (only visible for users with users.manage permission)
         if has_permission("users.manage"):
@@ -1772,6 +1797,42 @@ class MainWindow(PDFViewer):
 
         return "\n".join(p for p in parts if p)
 
+    def _run_delivery_ticket_triage_split(self) -> None:
+        """Split Brother PDF batch scans into individual OCR-renamed tickets."""
+        try:
+            from dmelogic.services.delivery_ticket_triage import process_delivery_ticket_triage_batches
+
+            result = process_delivery_ticket_triage_batches(
+                folder_path=getattr(self, "folder_path", None)
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Delivery Ticket Triage", f"Failed to process triage batches:\n\n{e}")
+            return
+
+        lines = [
+            f"Input: {result.triage_dir}",
+            f"Output: {result.output_dir}",
+            "",
+            f"Batch PDFs found: {result.selected}",
+            f"Pages split: {result.pages}",
+            f"Tickets saved: {result.saved}",
+            f"Attached: {result.attached}",
+            f"Already attached: {result.already_attached}",
+            f"No order detected: {result.no_order}",
+            f"OCR failures: {result.ocr_fail}",
+            f"Save failures: {result.save_fail}",
+            f"Batches archived: {result.archived}",
+            "",
+        ]
+
+        if result.details:
+            lines.append("Details:")
+            lines.extend(result.details[:14])
+            if len(result.details) > 14:
+                lines.append(f"... and {len(result.details) - 14} more")
+
+        QMessageBox.information(self, "Delivery Ticket Triage", "\n".join(lines))
+
     # -------------------- New Order Wizard --------------------
 
     def open_new_order_wizard(self, patient_context: dict | None = None, rx_context: dict | None = None) -> None:
@@ -1958,6 +2019,8 @@ class MainWindow(PDFViewer):
                 patient_address=patient_address or None,
                 prescriber_name=(result.prescriber_name or "").strip() or None,
                 prescriber_npi=(result.prescriber_npi or "").strip() or None,
+                prescriber_phone=(result.prescriber_phone or "").strip() or None,
+                prescriber_fax=(result.prescriber_fax or "").strip() or None,
                 rx_date_2=(result.rx_date_2 or "").strip() or None,
                 prescriber_name_2=(result.prescriber_name_2 or "").strip() or None,
                 prescriber_npi_2=(result.prescriber_npi_2 or "").strip() or None,
@@ -2213,6 +2276,7 @@ class MainWindow(PDFViewer):
                     "prescriber_name": data.get("prescriber_name", ""),
                     "prescriber_npi": data.get("prescriber_npi", ""),
                     "prescriber_phone": data.get("prescriber_phone", ""),
+                    "prescriber_fax": data.get("prescriber_fax", ""),
                 }
         except Exception:
             rx_ctx = {}

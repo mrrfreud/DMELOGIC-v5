@@ -12,7 +12,7 @@ accent_color = "#F97316"
 follow_os_theme = true      # when true, the OS theme overrides `default`
 
 [session]
-idle_timeout_minutes = 15
+idle_timeout_minutes = 60
 failed_login_lockout_attempts = 5
 failed_login_lockout_minutes = 10
 remember_window_geometry = true

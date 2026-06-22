@@ -54,6 +54,8 @@ def search_patients(term: str, limit: int = 50):
 class PatientPickerDialog(QDialog):
     """Type a name, pick a patient. Result via selected_patient()."""
 
+    RESULT_CREATE_PATIENT = 1001
+
     def __init__(self, parent: QWidget | None = None, initial: str = ""):
         super().__init__(parent)
         self.setWindowTitle("Link to Patient")
@@ -83,6 +85,10 @@ class PatientPickerDialog(QDialog):
         root.addWidget(self.status)
 
         btns = QHBoxLayout()
+        self.create_btn = QPushButton("Create patient profile")
+        self.create_btn.setProperty("flat", True)
+        self.create_btn.clicked.connect(self._request_create_patient)
+        btns.addWidget(self.create_btn)
         btns.addStretch()
         cancel = QPushButton("Cancel"); cancel.setProperty("flat", True)
         cancel.clicked.connect(self.reject)
@@ -120,6 +126,9 @@ class PatientPickerDialog(QDialog):
             f"{len(rows)} match(es)" if rows else "No matching patients")
         if rows:
             self.table.selectRow(0)
+
+    def _request_create_patient(self):
+        self.done(self.RESULT_CREATE_PATIENT)
 
     def _accept_selection(self, *_):
         row = self.table.currentRow()

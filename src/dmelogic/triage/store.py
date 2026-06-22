@@ -175,8 +175,8 @@ class TriageStore:
             return self._row_to_bucket(r) if r else None
 
     def add_bucket(self, name: str, folder: str = "", status: str = "",
-                   color: str = "#0d9488", letter_filing: bool = False) -> int:
-        folder = folder or self._default_folder_for(name)
+                   color: str = "#0d9488", letter_filing: bool = True) -> int:
+        folder = folder or "Scans"
         with self._connect() as conn:
             next_order = conn.execute(
                 "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM buckets"

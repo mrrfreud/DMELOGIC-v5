@@ -2096,17 +2096,17 @@ class OrderEditorDialog(QDialog):
             pass
         
         order_num = self._format_order_number(self.order)
-        label = "DC" if is_delivery else "RX"
+        label = "DT" if is_delivery else "RX"
         suggested = f"{patient_name} {order_num} {label}".strip()
         
         # Scan
         from dmelogic.scan import scan_document
         if is_delivery:
-            from dmelogic.paths import delivery_tickets_folder
+            from dmelogic.paths import delivery_ticket_split_folder
             filename = scan_document(
                 parent_widget=self,
                 suggested_name=suggested,
-                save_folder=delivery_tickets_folder(),
+                save_folder=delivery_ticket_split_folder(),
             )
         else:
             filename = scan_document(
@@ -2181,7 +2181,7 @@ class OrderEditorDialog(QDialog):
         except Exception:
             patient_name = ""
 
-        label = "DC" if is_delivery else "RX"
+        label = "DT" if is_delivery else "RX"
         order_num = self._format_order_number(self.order)
         suggested = f"{patient_name} {order_num} {label}".strip()
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dmelogic.db.connection import open_db
@@ -24,6 +24,10 @@ class LockoutStatus:
     locked: bool
     locked_until: datetime | None = None
     remaining_attempts: int = 0
+
+
+def _normalize_username(username: str) -> str:
+    return (username or "").strip().casefold()
 
 
 def init_lockout_db(db_path: Path) -> None:
@@ -42,19 +46,46 @@ def init_lockout_db(db_path: Path) -> None:
 
 def record_attempt(db_path: Path, username: str, success: bool) -> None:
     try:
+        normalized = _normalize_username(username)
+        if not normalized:
+            return
         with open_db(db_path) as conn:
             conn.execute(
                 "INSERT INTO login_attempts (username, ts, success) VALUES (?, ?, ?)",
-                (username, datetime.utcnow().isoformat() + "Z", 1 if success else 0),
+                (
+                    normalized,
+                    datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                    1 if success else 0,
+                ),
             )
             # Clear failed attempts on success to give the user a fresh slate.
             if success:
                 conn.execute(
-                    "DELETE FROM login_attempts WHERE username = ? AND success = 0",
-                    (username,),
+                    "DELETE FROM login_attempts WHERE (username = ? OR LOWER(username) = ?) AND success = 0",
+                    (normalized, normalized),
                 )
     except Exception as e:
         logger.warning(f"record_attempt failed for {username}: {e}")
+
+
+def clear_attempts(db_path: Path, username: str | None = None) -> None:
+    """Clear lockout attempt history for one user or for all users."""
+    try:
+        with open_db(db_path) as conn:
+            if username is None:
+                conn.execute("DELETE FROM login_attempts")
+                return
+
+            normalized = _normalize_username(username)
+            if not normalized:
+                return
+
+            conn.execute(
+                "DELETE FROM login_attempts WHERE username = ? OR LOWER(username) = ?",
+                (normalized, normalized),
+            )
+    except Exception as e:
+        logger.warning(f"clear_attempts failed for {username}: {e}")
 
 
 def check_lockout(
@@ -72,24 +103,30 @@ def check_lockout(
     The lockout itself lasts lockout_minutes from the most recent failure.
     """
     try:
-        cutoff_window = (datetime.utcnow() - timedelta(minutes=window_minutes)).isoformat() + "Z"
+        normalized = _normalize_username(username)
+        if not normalized:
+            return LockoutStatus(locked=False, remaining_attempts=max_attempts)
+
+        cutoff_window = (
+            datetime.now(timezone.utc) - timedelta(minutes=window_minutes)
+        ).isoformat().replace("+00:00", "Z")
         with open_db(db_path) as conn:
             rows = conn.execute(
                 """
                 SELECT ts FROM login_attempts
-                WHERE username = ? AND success = 0 AND ts >= ?
+                WHERE (username = ? OR LOWER(username) = ?) AND success = 0 AND ts >= ?
                 ORDER BY ts DESC
                 """,
-                (username, cutoff_window),
+                (normalized, normalized, cutoff_window),
             ).fetchall()
 
         failures = len(rows)
         remaining = max(0, max_attempts - failures)
 
         if failures >= max_attempts:
-            most_recent = datetime.fromisoformat(rows[0]["ts"].rstrip("Z"))
+            most_recent = datetime.fromisoformat(rows[0]["ts"].replace("Z", "+00:00"))
             unlock_at = most_recent + timedelta(minutes=lockout_minutes)
-            if datetime.utcnow() < unlock_at:
+            if datetime.now(timezone.utc) < unlock_at:
                 return LockoutStatus(locked=True, locked_until=unlock_at, remaining_attempts=0)
 
         return LockoutStatus(locked=False, remaining_attempts=remaining)

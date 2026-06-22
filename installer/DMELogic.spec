@@ -73,7 +73,7 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,                       # GUI app — no console window
-    icon=str(ROOT / "assets" / "DMELogic Icon.ico"),
+    icon=str(ROOT / "assets" / "Nova Icon.ico"),
 )
 
 coll = COLLECT(

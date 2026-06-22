@@ -41,17 +41,20 @@ class DocumentViewer(QWidget):
         self.prev_btn = QPushButton("◀ Prev")
         self.next_btn = QPushButton("Next ▶")
         self.page_lbl = QLabel("—")
+        self.open_browser_btn = QPushButton("🌐 Browser")
         self.zoom_out_btn = QPushButton("−")
         self.zoom_in_btn = QPushButton("+")
-        for w in (self.prev_btn, self.next_btn):
+        for w in (self.prev_btn, self.next_btn, self.open_browser_btn):
             w.setFixedHeight(28)
         self.prev_btn.clicked.connect(self.prev_page)
         self.next_btn.clicked.connect(self.next_page)
+        self.open_browser_btn.clicked.connect(self.open_in_browser)
         self.zoom_in_btn.clicked.connect(lambda: self._set_zoom(self._zoom + 0.25))
         self.zoom_out_btn.clicked.connect(lambda: self._set_zoom(self._zoom - 0.25))
         bar.addWidget(self.prev_btn)
         bar.addWidget(self.page_lbl)
         bar.addWidget(self.next_btn)
+        bar.addWidget(self.open_browser_btn)
         bar.addStretch()
         bar.addWidget(self.zoom_out_btn)
         bar.addWidget(self.zoom_in_btn)
@@ -94,6 +97,20 @@ class DocumentViewer(QWidget):
 
     def clear(self) -> None:
         self.load(None)
+
+    def open_in_browser(self) -> None:
+        """Open the current document in the default web browser."""
+        if self._path is None or not self._path.exists():
+            return
+        try:
+            import webbrowser
+
+            uri = self._path.resolve().as_uri()
+            if self._pdf is not None:
+                uri = f"{uri}#page={self._page + 1}"
+            webbrowser.open(uri, new=2)
+        except Exception as e:
+            logger.warning("Failed to open in browser %s: %s", self._path, e)
 
     def release(self) -> None:
         """Release the open file handle so the file can be moved/renamed.
@@ -180,6 +197,7 @@ class DocumentViewer(QWidget):
         is_pdf = self._pdf is not None
         self.prev_btn.setEnabled(is_pdf and self._page > 0)
         self.next_btn.setEnabled(is_pdf and self._page < count - 1)
+        self.open_browser_btn.setEnabled(bool(self._path and self._path.exists()))
         if count == 0:
             self.page_lbl.setText("—")
         elif is_pdf:
