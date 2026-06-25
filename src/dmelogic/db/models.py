@@ -25,6 +25,7 @@ class OrderStatus(str, Enum):
     Union of legacy values and new workflow states used by the refactored UI.
     """
     PENDING = "Pending"
+    INCOMPLETE = "Incomplete"
     PENDING_APPROVAL = "Pending Approval"
     VERIFIED = "Verified"
     SUBMITTED = "Submitted"
@@ -347,6 +348,7 @@ class OrderInput:
     rx_origin: Optional[str] = None
     
     billing_type: str = BillingType.INSURANCE.value
+    place_of_service: str = "12"
     order_status: str = OrderStatus.PENDING.value
     
     primary_insurance: Optional[str] = None
@@ -619,6 +621,7 @@ class Order:
     order_status: OrderStatus = OrderStatus.PENDING
     billing_type: BillingType = BillingType.INSURANCE
     billing_selection: Optional[str] = None  # legacy string column
+    place_of_service: str = "12"
     hold_until_date: Optional[date] = None
     hold_resume_status: Optional[OrderStatus] = None
     hold_note: Optional[str] = None

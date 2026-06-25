@@ -24,6 +24,8 @@ from datetime import date
 from decimal import Decimal
 
 from .models import Order, OrderItem, OrderStatus, BillingType
+from dmelogic.place_of_service import place_of_service_code
+from dmelogic.services.order_pricing import line_pricing_for_order_item
 
 
 @dataclass
@@ -237,8 +239,14 @@ class StatePortalOrderView:
         secondary_dx = order.icd_codes[1:] if len(order.icd_codes) > 1 else []
         
         # Line items
+        order_place_of_service = place_of_service_code(getattr(order, "place_of_service", None))
         line_items = [
-            StatePortalLineItem.from_order_item(item, line_num=idx+1)
+            StatePortalLineItem.from_order_item(
+                item,
+                line_num=idx+1,
+                place_of_service=order_place_of_service,
+                folder_path=folder_path,
+            )
             for idx, item in enumerate(order.items)
         ]
         
@@ -372,10 +380,17 @@ class StatePortalLineItem:
     place_of_service: str = "12"  # 12 = Home (common for DME)
     
     @classmethod
-    def from_order_item(cls, item: OrderItem, line_num: int) -> "StatePortalLineItem":
+    def from_order_item(
+        cls,
+        item: OrderItem,
+        line_num: int,
+        place_of_service: str = "12",
+        folder_path: Optional[str] = None,
+    ) -> "StatePortalLineItem":
         """Convert domain OrderItem to portal line item."""
-        unit_price = item.cost_ea or Decimal("0.00")
-        line_total = item.total_cost or (unit_price * item.quantity)
+        pricing = line_pricing_for_order_item(item, folder_path=folder_path)
+        unit_price = pricing.unit_price
+        line_total = pricing.total
         
         return cls(
             line_number=line_num,
@@ -384,6 +399,7 @@ class StatePortalLineItem:
             quantity=item.quantity,
             unit_price=unit_price,
             line_total=line_total,
+            place_of_service=place_of_service_code(place_of_service),
         )
     
     def to_portal_json(self) -> dict:

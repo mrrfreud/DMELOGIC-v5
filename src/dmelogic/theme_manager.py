@@ -164,6 +164,7 @@ def get_status_color(status: str, theme_name: str = "dark") -> str:
         "active": "#28a745",
         "success": "#28a745",
         "pending": "#ffc107",
+        "incomplete": "#f97316",
         "warning": "#ffc107",
         "error": "#dc3545",
         "danger": "#dc3545",

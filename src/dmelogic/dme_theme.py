@@ -97,6 +97,7 @@ class COLORS:
 
 # Status badge color map: status_key → (bg, text_color, border_color)
 STATUS_COLORS = {
+    "incomplete": (COLORS.AMBER_PALE,   COLORS.AMBER,   COLORS.AMBER_BORDER),
     "pending":   (COLORS.AMBER_PALE,   COLORS.AMBER,   COLORS.AMBER_BORDER),
     "shipped":   (COLORS.GREEN_PALE,   COLORS.GREEN,   COLORS.GREEN_BORDER),
     "unbilled":  (COLORS.YELLOW_PALE,  COLORS.YELLOW,  COLORS.YELLOW_BORDER),

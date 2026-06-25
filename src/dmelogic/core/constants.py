@@ -13,6 +13,7 @@ class OrderStatus(str, Enum):
     Canonical order statuses. Subclasses `str` so SQL queries can use
     `OrderStatus.UNBILLED` directly and it serializes to "Unbilled".
     """
+    INCOMPLETE = "Incomplete"
     UNBILLED = "Unbilled"
     ON_HOLD = "On Hold"
     PENDING_APPROVAL = "Pending Approval"

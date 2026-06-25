@@ -299,6 +299,7 @@ def row_to_order(row: sqlite3.Row) -> Order:
         prescriber_npi_2=safe_get(row, "prescriber_npi_2"),
         billing_selection=billing_str,
         billing_type=billing_type,
+        place_of_service=safe_get(row, "place_of_service") or "12",
         order_status=order_status,
         delivery_date=safe_get(row, "delivery_date"),
         pickup_date=safe_date(safe_get(row, "pickup_date"), "pickup_date"),

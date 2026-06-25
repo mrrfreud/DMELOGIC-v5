@@ -57,6 +57,7 @@ from dmelogic.dme_widgets import (
     StatusBadge, EpacesFieldRow, RefillSummaryBox, WizardSteps,
     StatusRadioGroup, SectionBox, FormRow, AlertBox
 )
+from dmelogic.place_of_service import place_of_service_label
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -268,7 +269,7 @@ class EpacesHelperDialog(DMEDialog):
         p2 = self._make_tab_page([
             ("Date of Service",  d.get("date_of_service", "")),
             ("Order #",          d.get("order_id", "")),
-            ("Place of Service", "12 – Home"),
+            ("Place of Service", place_of_service_label(d.get("place_of_service"))),
             ("Type of Bill",     ""),
         ])
         tabs.addTab(p2, "② Dates & Order")

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 import re
 
-from PyQt6.QtCore import Qt, QDate, QObject, QTimer
+from PyQt6.QtCore import Qt, QDate, QObject, QTimer, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor
 from PyQt6.QtWidgets import (
     QDialog,
@@ -246,6 +246,9 @@ class OrderWizardResult:
     # NEW: Document attachment paths
     attachment_paths: List[str] = field(default_factory=list)
 
+    # Existing incomplete order being resumed, if any
+    resume_order_id: int = 0
+
 
 def _k_modifier_for_month(month: int) -> str | None:
     """Return KH/KI/KJ modifier based on rental month."""
@@ -275,6 +278,8 @@ class OrderWizard(QDialog):
             data = wizard.result  # OrderWizardResult
     """
 
+    order_saved_for_later = pyqtSignal(int)
+
     def __init__(
         self,
         parent=None,
@@ -282,6 +287,7 @@ class OrderWizard(QDialog):
         folder_path: Optional[str] = None,
         initial_patient: Optional[Dict[str, Any]] = None,
         rx_context: Optional[Dict[str, Any]] = None,
+        resume_order_id: int = 0,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("New Order Wizard")
@@ -305,6 +311,8 @@ class OrderWizard(QDialog):
 
         self.initial_patient = initial_patient or {}
         self.rx_context = rx_context or {}
+        self.resume_order_id = int(resume_order_id or 0)
+        self._resume_order_data: Optional[Dict[str, Any]] = None
         self._result: Optional[OrderWizardResult] = None
         self._items_page_first_visit = True  # Track first entry to Items page
 
@@ -323,10 +331,12 @@ class OrderWizard(QDialog):
         self._refill_group_id: Optional[int] = None
 
         self._build_ui()
+        if self.resume_order_id:
+            self._load_incomplete_order_for_resume()
         # Insurance loading now happens in _build_patient_page() after combo is created
         
         # Check for linkable orders after patient is loaded
-        if self.patient_id:
+        if self.patient_id and not self.resume_order_id:
             QTimer.singleShot(500, self._maybe_link_orders_for_patient)
 
     # ------------------------- public API -------------------------
@@ -334,6 +344,196 @@ class OrderWizard(QDialog):
     @property
     def result(self) -> Optional[OrderWizardResult]:
         return self._result
+
+    def _clean_resume_text(self, value: Any) -> str:
+        text = "" if value is None else str(value).strip()
+        if not text:
+            return ""
+        lowered = text.lower()
+        if lowered in {"none", "null", "[none]", "[null]", "[incomplete]", "[unknown]"}:
+            return ""
+        return text
+
+    def _resume_patient_name(self, order: Dict[str, Any]) -> str:
+        name = self._clean_resume_text(order.get("patient_name"))
+        if name:
+            if "," in name:
+                last, first = [self._clean_resume_text(part) for part in name.split(",", 1)]
+                return f"{last}, {first}".strip(", ")
+            return name
+        last = self._clean_resume_text(order.get("patient_last_name"))
+        first = self._clean_resume_text(order.get("patient_first_name"))
+        return f"{last}, {first}".strip(", ")
+
+    def _set_date_edit_from_value(self, edit: QDateEdit, value: Any) -> None:
+        text = self._clean_resume_text(value)
+        if not text:
+            try:
+                edit.setDate(edit.minimumDate())
+            except Exception:
+                pass
+            return
+
+        for fmt in ("%m/%d/%Y", "%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%m-%d-%Y", "%Y/%m/%d"):
+            try:
+                from datetime import datetime
+
+                parsed = datetime.strptime(text.split(".")[0], fmt)
+                edit.setDate(QDate(parsed.year, parsed.month, parsed.day))
+                return
+            except Exception:
+                continue
+
+    def _set_combo_text(self, combo: QComboBox, value: Any) -> None:
+        text = self._clean_resume_text(value)
+        if not text:
+            return
+        idx = combo.findText(text)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+
+    def _safe_resume_int(self, value: Any, default: int = 0) -> int:
+        try:
+            if value in (None, ""):
+                return default
+            return int(str(value).strip())
+        except Exception:
+            return default
+
+    def _load_incomplete_order_for_resume(self) -> None:
+        from dmelogic.db.orders import (
+            INCOMPLETE_ORDER_DRAFT_NOTE,
+            fetch_incomplete_order_wizard_data,
+        )
+
+        data = fetch_incomplete_order_wizard_data(
+            self.resume_order_id,
+            folder_path=self.folder_path,
+        )
+        if not data:
+            raise ValueError(f"Order ORD-{self.resume_order_id:03d} is not an incomplete order.")
+
+        self._resume_order_data = data
+        order = data.get("order") or {}
+        items = data.get("items") or []
+        self.setWindowTitle(f"Continue Incomplete Order ORD-{self.resume_order_id:03d}")
+        self._items_page_first_visit = False
+
+        self.patient_id = self._safe_resume_int(order.get("patient_id"), 0)
+        self._refill_group_id = order.get("refill_group_id") or self._refill_group_id
+
+        self.patient_name_edit.setText(self._resume_patient_name(order))
+        self.patient_dob_edit.setText(self._clean_resume_text(order.get("patient_dob")))
+        self.patient_phone_edit.setText(self._clean_resume_text(order.get("patient_phone")))
+
+        if self.patient_id:
+            self._load_patient_for_wizard()
+            self._load_patient_insurance()
+            if not self.patient_name_edit.text().strip() and self._patient:
+                last = self._clean_resume_text(self._patient["last_name"] if "last_name" in self._patient.keys() else "")
+                first = self._clean_resume_text(self._patient["first_name"] if "first_name" in self._patient.keys() else "")
+                self.patient_name_edit.setText(f"{last}, {first}".strip(", "))
+
+        self._set_date_edit_from_value(self.order_date_edit, order.get("order_date"))
+        self._set_date_edit_from_value(self.rx_date_edit, order.get("rx_date"))
+        self._set_combo_text(self.rx_origin_combo, order.get("rx_origin"))
+        self.prescriber_name_edit.setText(self._clean_resume_text(order.get("prescriber_name")))
+        self.prescriber_npi_edit.setText(self._clean_resume_text(order.get("prescriber_npi")))
+        self.prescriber_phone_edit.setText(self._clean_resume_text(order.get("prescriber_phone")))
+        self.prescriber_fax_edit.setText(self._clean_resume_text(order.get("prescriber_fax")))
+
+        second_prescriber = any(
+            self._clean_resume_text(order.get(key))
+            for key in ("rx_date_2", "prescriber_name_2", "prescriber_npi_2")
+        )
+        self.prescriber2_checkbox.setChecked(second_prescriber)
+        if second_prescriber:
+            self._set_date_edit_from_value(self.rx_date_2_edit, order.get("rx_date_2"))
+            self.prescriber_name_2_edit.setText(self._clean_resume_text(order.get("prescriber_name_2")))
+            self.prescriber_npi_2_edit.setText(self._clean_resume_text(order.get("prescriber_npi_2")))
+            self.prescriber_phone_2_edit.setText(self._clean_resume_text(order.get("prescriber_phone_2")))
+            self.prescriber_fax_2_edit.setText(self._clean_resume_text(order.get("prescriber_fax_2")))
+
+        for idx, edit in enumerate(getattr(self, "dx_edits", []), start=1):
+            edit.setText(self._clean_resume_text(order.get(f"icd_code_{idx}")))
+        self.doctor_directions_edit.setPlainText(self._clean_resume_text(order.get("doctor_directions")))
+
+        self.items_table.setRowCount(0)
+        for item in items:
+            self._add_resume_item_row(item)
+
+        self._set_date_edit_from_value(self.delivery_date_edit, order.get("delivery_date"))
+        self._set_combo_text(self.billing_type_combo, order.get("billing_selection"))
+        notes = self._clean_resume_text(order.get("notes"))
+        notes = notes.replace(INCOMPLETE_ORDER_DRAFT_NOTE, "")
+        self.notes_edit.setPlainText("\n".join(line.rstrip() for line in notes.splitlines()).strip())
+
+        attached_raw = self._clean_resume_text(order.get("attached_rx_files"))
+        self._attachment_paths = []
+        self.attachment_list.clear()
+        if attached_raw:
+            from pathlib import Path
+
+            for path_text in [part.strip() for part in attached_raw.replace("\n", ";").split(";") if part.strip()]:
+                if path_text not in self._attachment_paths:
+                    self._attachment_paths.append(path_text)
+                    self.attachment_list.addItem(f"📄 {Path(path_text).name}")
+        self._update_attachment_status()
+
+        resume_page = self._infer_resume_page()
+        self.stack.setCurrentIndex(resume_page)
+        if resume_page == 3:
+            self._sync_review_page()
+        self._update_buttons()
+
+    def _add_resume_item_row(self, item: Dict[str, Any]) -> None:
+        self.add_item_row()
+        row = self.items_table.rowCount() - 1
+        self.items_table.setItem(row, 0, QTableWidgetItem(self._clean_resume_text(item.get("hcpcs_code"))))
+        self.items_table.setItem(row, 1, QTableWidgetItem(self._clean_resume_text(item.get("description"))))
+
+        qty = self.items_table.cellWidget(row, 2)
+        if isinstance(qty, QSpinBox):
+            qty.setValue(max(0, self._safe_resume_int(item.get("qty"), 0)))
+        refills = self.items_table.cellWidget(row, 3)
+        if isinstance(refills, QSpinBox):
+            refills.setValue(max(0, self._safe_resume_int(item.get("refills"), 0)))
+        days = self.items_table.cellWidget(row, 4)
+        if isinstance(days, QSpinBox):
+            days.setValue(max(1, self._safe_resume_int(item.get("day_supply"), 30)))
+
+        self.items_table.setItem(row, 5, QTableWidgetItem(self._clean_resume_text(item.get("directions"))))
+
+        rental_container = self.items_table.cellWidget(row, 6)
+        rental_box = rental_container.findChild(QCheckBox) if rental_container else None
+        if rental_box:
+            rental_box.setChecked(bool(self._safe_resume_int(item.get("is_rental"), 0)))
+
+        for offset, key in enumerate(("modifier1", "modifier2", "modifier3", "modifier4"), start=7):
+            edit = self.items_table.cellWidget(row, offset)
+            if isinstance(edit, QLineEdit):
+                edit.setText(self._clean_resume_text(item.get(key)).upper())
+
+    def _infer_resume_page(self) -> int:
+        if not getattr(self, "patient_id", 0):
+            return 0
+
+        has_rx_date = self._date_edit_text(self.rx_date_edit) if hasattr(self, "rx_date_edit") else ""
+        has_prescriber = bool(self.prescriber_name_edit.text().strip())
+        has_contact = bool(self.prescriber_phone_edit.text().strip() or self.prescriber_fax_edit.text().strip())
+        has_icd = any(edit.text().strip() for edit in getattr(self, "dx_edits", []))
+        if not all([has_rx_date, has_prescriber, has_contact, has_icd]):
+            return 1
+
+        valid_item = False
+        for item in self._collect_items(allow_incomplete=True):
+            if (item.hcpcs or item.description) and item.quantity > 0:
+                valid_item = True
+                break
+        if not valid_item:
+            return 2
+
+        return 3
 
     def _load_patient_for_wizard(self) -> None:
         """
@@ -644,10 +844,12 @@ class OrderWizard(QDialog):
         self.back_button = QPushButton("Back")
         self.next_button = QPushButton("Next")
         self.finish_button = QPushButton("Finish")
+        self.save_later_button = QPushButton("Save For Later")
         self.cancel_button = QPushButton("Cancel")
 
         # Button hierarchy using existing theme classes
         self.back_button.setProperty("class", "secondary")
+        self.save_later_button.setProperty("class", "secondary")
         self.cancel_button.setProperty("class", "secondary")
         # Next and Finish use primary styling by default
         
@@ -655,12 +857,14 @@ class OrderWizard(QDialog):
         buttons_layout.addWidget(self.back_button)
         buttons_layout.addWidget(self.next_button)
         buttons_layout.addWidget(self.finish_button)
+        buttons_layout.addWidget(self.save_later_button)
         buttons_layout.addWidget(self.cancel_button)
         buttons_layout.setSpacing(8)
 
         self.back_button.clicked.connect(self.go_back)
         self.next_button.clicked.connect(self.go_next)
         self.finish_button.clicked.connect(self.finish)
+        self.save_later_button.clicked.connect(self.save_for_later)
         self.cancel_button.clicked.connect(self.reject)
 
         card_layout.addLayout(buttons_layout)
@@ -2116,6 +2320,149 @@ class OrderWizard(QDialog):
             # Set to same index as patient page
             self.review_insurance_combo.setCurrentIndex(self.insurance_combo.currentIndex())
     
+    def _date_edit_text(self, edit: QDateEdit) -> str:
+        try:
+            selected = edit.date()
+            minimum = edit.minimumDate()
+            if not selected.isValid() or selected == minimum:
+                return ""
+            return selected.toString("MM/dd/yyyy")
+        except Exception:
+            return ""
+
+    def _collect_insurance_snapshot(self) -> tuple[str, str, str, str, str]:
+        insurance_name = ""
+        insurance_kind = ""
+        insurance_policy = ""
+        insurance_member_id = ""
+        insurance_group = ""
+
+        if hasattr(self, "insurance_combo") and isinstance(self.insurance_combo, QComboBox):
+            data = self.insurance_combo.currentData()
+            if isinstance(data, dict):
+                insurance_name = data.get("name", "") or ""
+                insurance_kind = data.get("kind", "") or ""
+                insurance_policy = data.get("policy_number", "") or ""
+                insurance_member_id = data.get("member_id", "") or ""
+                insurance_group = data.get("group_number", "") or ""
+            else:
+                txt = self.insurance_combo.currentText().strip()
+                if txt and "no insurance on file" not in txt.lower():
+                    insurance_name = txt
+
+        return insurance_name, insurance_kind, insurance_policy, insurance_member_id, insurance_group
+
+    def _build_result(self, items: Optional[List[OrderItem]] = None) -> OrderWizardResult:
+        dx_values = [e.text().strip() for e in getattr(self, "dx_edits", [])]
+        dx_values += [""] * (5 - len(dx_values))
+
+        delivery_text = ""
+        if hasattr(self, "delivery_date_edit"):
+            delivery_text = self._date_edit_text(self.delivery_date_edit)
+
+        insurance_name, insurance_kind, insurance_policy, insurance_member_id, insurance_group = self._collect_insurance_snapshot()
+
+        rx_date_2 = ""
+        if (
+            hasattr(self, "prescriber2_checkbox")
+            and self.prescriber2_checkbox.isChecked()
+            and hasattr(self, "rx_date_2_edit")
+        ):
+            rx_date_2 = self._date_edit_text(self.rx_date_2_edit)
+
+        return OrderWizardResult(
+            patient_name=self.patient_name_edit.text().strip() if hasattr(self, "patient_name_edit") else "",
+            patient_dob=self.patient_dob_edit.text().strip() if hasattr(self, "patient_dob_edit") else "",
+            patient_phone=self.patient_phone_edit.text().strip() if hasattr(self, "patient_phone_edit") else "",
+            order_date=self._date_edit_text(self.order_date_edit) if hasattr(self, "order_date_edit") else "",
+            rx_date=self._date_edit_text(self.rx_date_edit) if hasattr(self, "rx_date_edit") else "",
+            rx_origin=self.rx_origin_combo.currentText().strip() if hasattr(self, "rx_origin_combo") else "",
+            prescriber_name=self.prescriber_name_edit.text().strip() if hasattr(self, "prescriber_name_edit") else "",
+            prescriber_npi=self.prescriber_npi_edit.text().strip() if hasattr(self, "prescriber_npi_edit") else "",
+            prescriber_phone=self.prescriber_phone_edit.text().strip() if hasattr(self, "prescriber_phone_edit") else "",
+            prescriber_fax=self.prescriber_fax_edit.text().strip() if hasattr(self, "prescriber_fax_edit") else "",
+            rx_date_2=rx_date_2,
+            prescriber_name_2=self.prescriber_name_2_edit.text().strip() if (
+                hasattr(self, "prescriber2_checkbox") and self.prescriber2_checkbox.isChecked()
+            ) else "",
+            prescriber_npi_2=self.prescriber_npi_2_edit.text().strip() if (
+                hasattr(self, "prescriber2_checkbox") and self.prescriber2_checkbox.isChecked()
+            ) else "",
+            prescriber_phone_2=self.prescriber_phone_2_edit.text().strip() if (
+                hasattr(self, "prescriber2_checkbox") and self.prescriber2_checkbox.isChecked()
+            ) else "",
+            prescriber_fax_2=self.prescriber_fax_2_edit.text().strip() if (
+                hasattr(self, "prescriber2_checkbox") and self.prescriber2_checkbox.isChecked()
+            ) else "",
+            items=items if items is not None else self._collect_items(),
+            icd_code_1=dx_values[0],
+            icd_code_2=dx_values[1],
+            icd_code_3=dx_values[2],
+            icd_code_4=dx_values[3],
+            icd_code_5=dx_values[4],
+            doctor_directions=self.doctor_directions_edit.toPlainText().strip()
+            if hasattr(self, "doctor_directions_edit")
+            else "",
+            delivery_date=delivery_text,
+            billing_type=self.billing_type_combo.currentText() if hasattr(self, "billing_type_combo") else "",
+            notes=self.notes_edit.toPlainText().strip() if hasattr(self, "notes_edit") else "",
+            patient_id=self.patient_id,
+            insurance_name=insurance_name,
+            insurance_kind=insurance_kind,
+            insurance_policy_number=insurance_policy,
+            insurance_member_id=insurance_member_id,
+            insurance_group_number=insurance_group,
+            refill_group_id=self._refill_group_id,
+            on_hold=self.on_hold_checkbox.isChecked() if hasattr(self, "on_hold_checkbox") else False,
+            attachment_paths=self._attachment_paths.copy() if hasattr(self, "_attachment_paths") else [],
+            resume_order_id=self.resume_order_id,
+        )
+
+    def save_for_later(self) -> None:
+        reply = QMessageBox.question(
+            self,
+            "Save For Later",
+            "Save this unfinished order as Incomplete so it can be finished later?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            from dmelogic.db.orders import (
+                create_incomplete_order_from_wizard_result,
+                update_incomplete_order_from_wizard_result,
+            )
+
+            self._result = self._build_result(items=self._collect_items(allow_incomplete=True))
+            if self.resume_order_id:
+                order_id = update_incomplete_order_from_wizard_result(
+                    self.resume_order_id,
+                    self._result,
+                    complete=False,
+                    folder_path=self.folder_path,
+                )
+            else:
+                order_id = create_incomplete_order_from_wizard_result(
+                    self._result,
+                    folder_path=self.folder_path,
+                )
+            self.order_saved_for_later.emit(order_id)
+            QMessageBox.information(
+                self,
+                "Saved For Later",
+                f"Order ORD-{order_id:03d} was saved as Incomplete.",
+            )
+            self.done(QDialog.DialogCode.Rejected)
+        except Exception as e:
+            print(f"Error saving incomplete order: {e}")
+            QMessageBox.critical(
+                self,
+                "Save For Later",
+                f"Could not save this unfinished order:\n{e}",
+            )
+
     def finish(self) -> None:
         # Validate last page too
         if not self._validate_current_page():
@@ -2173,89 +2520,7 @@ class OrderWizard(QDialog):
         if confirm.exec() != QMessageBox.StandardButton.Yes:
             return
 
-        # collect dx codes
-        dx_values = [e.text().strip() for e in getattr(self, "dx_edits", [])]
-        dx_values += [""] * (5 - len(dx_values))  # pad
-
-        # Delivery date: treat special placeholder as "no date"
-        delivery_text = self.delivery_date_edit.text().strip()
-        special = self.delivery_date_edit.specialValueText()
-        if special and delivery_text == special:
-            delivery_text = ""
-
-        # Insurance selection - capture complete snapshot
-        insurance_name = ""
-        insurance_kind = ""
-        insurance_policy = ""
-        insurance_member_id = ""
-        insurance_group = ""
-
-        if hasattr(self, "insurance_combo") and isinstance(self.insurance_combo, QComboBox):
-            data = self.insurance_combo.currentData()
-            if isinstance(data, dict):
-                insurance_name = data.get("name", "") or ""
-                insurance_kind = data.get("kind", "") or ""
-                insurance_policy = data.get("policy_number", "") or ""
-                insurance_member_id = data.get("member_id", "") or ""
-                insurance_group = data.get("group_number", "") or ""
-            else:
-                # If user somehow typed a custom value (if made editable later)
-                txt = self.insurance_combo.currentText().strip()
-                if txt and "no insurance on file" not in txt.lower():
-                    insurance_name = txt
-
-        self._result = OrderWizardResult(
-            patient_name=self.patient_name_edit.text().strip(),
-            patient_dob=self.patient_dob_edit.text().strip(),
-            patient_phone=self.patient_phone_edit.text().strip(),
-            order_date=self.order_date_edit.date().toString("MM/dd/yyyy"),
-            rx_date=self.rx_date_edit.date().toString("MM/dd/yyyy"),
-            rx_origin=self.rx_origin_combo.currentText().strip() if hasattr(self, 'rx_origin_combo') else "",
-            # ✅ use the line-edit, not a (non-existent) combo
-            prescriber_name=self.prescriber_name_edit.text().strip(),
-            prescriber_npi=self.prescriber_npi_edit.text().strip(),
-            prescriber_phone=self.prescriber_phone_edit.text().strip(),
-            prescriber_fax=self.prescriber_fax_edit.text().strip(),
-            # Second prescriber (only if checkbox is checked and fields are filled)
-            rx_date_2=self.rx_date_2_edit.date().toString("MM/dd/yyyy") if (
-                hasattr(self, 'prescriber2_checkbox') and 
-                self.prescriber2_checkbox.isChecked() and 
-                self.rx_date_2_edit.date() != self.rx_date_2_edit.minimumDate()
-            ) else "",
-            prescriber_name_2=self.prescriber_name_2_edit.text().strip() if (
-                hasattr(self, 'prescriber2_checkbox') and self.prescriber2_checkbox.isChecked()
-            ) else "",
-            prescriber_npi_2=self.prescriber_npi_2_edit.text().strip() if (
-                hasattr(self, 'prescriber2_checkbox') and self.prescriber2_checkbox.isChecked()
-            ) else "",
-            prescriber_phone_2=self.prescriber_phone_2_edit.text().strip() if (
-                hasattr(self, 'prescriber2_checkbox') and self.prescriber2_checkbox.isChecked()
-            ) else "",
-            prescriber_fax_2=self.prescriber_fax_2_edit.text().strip() if (
-                hasattr(self, 'prescriber2_checkbox') and self.prescriber2_checkbox.isChecked()
-            ) else "",
-            items=items,
-            icd_code_1=dx_values[0],
-            icd_code_2=dx_values[1],
-            icd_code_3=dx_values[2],
-            icd_code_4=dx_values[3],
-            icd_code_5=dx_values[4],
-            doctor_directions=self.doctor_directions_edit.toPlainText().strip()
-            if hasattr(self, "doctor_directions_edit")
-            else "",
-            delivery_date=delivery_text,
-            billing_type=self.billing_type_combo.currentText(),
-            notes=self.notes_edit.toPlainText().strip(),
-            patient_id=self.patient_id,
-            insurance_name=insurance_name,
-            insurance_kind=insurance_kind,
-            insurance_policy_number=insurance_policy,
-            insurance_member_id=insurance_member_id,
-            insurance_group_number=insurance_group,
-            refill_group_id=self._refill_group_id,
-            on_hold=self.on_hold_checkbox.isChecked(),
-            attachment_paths=self._attachment_paths.copy(),
-        )
+        self._result = self._build_result(items=items)
         self.accept()
 
     # ---------------------- Document Attachment Helpers ----------------------
@@ -2515,7 +2780,7 @@ class OrderWizard(QDialog):
         
         return None
 
-    def _collect_items(self) -> List[OrderItem]:
+    def _collect_items(self, allow_incomplete: bool = False) -> List[OrderItem]:
         items: List[OrderItem] = []
         
         for row in range(self.items_table.rowCount()):
@@ -2556,8 +2821,8 @@ class OrderWizard(QDialog):
             if not hcpcs and not desc:
                 continue
             
-            # Skip items with qty = 0
-            if qty == 0:
+            # Skip items with qty = 0 unless saving an unfinished draft.
+            if qty == 0 and not allow_incomplete:
                 continue
             
             items.append(

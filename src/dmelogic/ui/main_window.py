@@ -143,7 +143,7 @@ def build_orders_tab(self) -> QWidget:
     self.orders_search_edit.setMinimumWidth(260)
 
     self.orders_status_combo = QComboBox()
-    self.orders_status_combo.addItems(["All statuses", "Unbilled", "On Hold", "Open", "Pending", "Pending Approval", "Shipped", "Delivered", "Denied", "Cancelled", "RX on File"])
+    self.orders_status_combo.addItems(["All statuses", "Incomplete", "Unbilled", "On Hold", "Open", "Pending", "Pending Approval", "Shipped", "Delivered", "Denied", "Cancelled", "RX on File"])
 
     self.orders_date_combo = QComboBox()
     self.orders_date_combo.addItems(["All dates", "This week", "This month", "This year"])
@@ -379,7 +379,10 @@ def build_orders_tab(self) -> QWidget:
     self.orders_status_combo.currentIndexChanged.connect(self.apply_table_filters)
     self.orders_date_combo.currentIndexChanged.connect(self.apply_table_filters)
     self.orders_hide_zero_refills_checkbox.toggled.connect(self.apply_table_filters)
-    self.orders_show_cancelled_checkbox.toggled.connect(self.apply_table_filters)
+    if hasattr(self, "on_orders_show_cancelled_toggled"):
+        self.orders_show_cancelled_checkbox.toggled.connect(self.on_orders_show_cancelled_toggled)
+    else:
+        self.orders_show_cancelled_checkbox.toggled.connect(self.apply_table_filters)
 
     return tab
 
@@ -1406,6 +1409,78 @@ class MainWindow(PDFViewer):
 
     # -------------------- Modern Order Editor --------------------
 
+    def _open_incomplete_order_wizard(self, order_id: int) -> None:
+        """Resume an incomplete order in the New Order Wizard."""
+        wizard = OrderWizard(
+            self,
+            folder_path=getattr(self, "folder_path", None),
+            resume_order_id=order_id,
+        )
+
+        if hasattr(self, 'register_child_window'):
+            self.register_child_window(wizard)
+
+        def on_accepted():
+            if wizard.result:
+                self._complete_resumed_order_from_wizard(wizard.result)
+
+        def on_saved_for_later(_saved_order_id: int):
+            try:
+                if hasattr(self, "orders_status_combo"):
+                    idx = self.orders_status_combo.findText("Incomplete")
+                    if idx >= 0:
+                        self.orders_status_combo.setCurrentIndex(idx)
+                if hasattr(self, "load_orders"):
+                    self.load_orders()
+            except Exception as e:
+                print(f"⚠️ Could not refresh orders after saving resumed incomplete order {order_id}: {e}")
+
+        wizard.accepted.connect(on_accepted)
+        wizard.order_saved_for_later.connect(on_saved_for_later)
+        wizard.show()
+        wizard.raise_()
+        wizard.activateWindow()
+
+    def _complete_resumed_order_from_wizard(self, result: OrderWizardResult) -> None:
+        try:
+            from dmelogic.db.orders import update_incomplete_order_from_wizard_result
+
+            folder_path = getattr(self, "folder_path", None)
+            order_id = int(getattr(result, "resume_order_id", 0) or 0)
+            if not order_id:
+                raise ValueError("No incomplete order id was provided.")
+
+            update_incomplete_order_from_wizard_result(
+                order_id,
+                result,
+                complete=True,
+                folder_path=folder_path,
+            )
+
+            if getattr(result, "attachment_paths", None):
+                self._process_wizard_attachments(order_id, result.attachment_paths, folder_path, patient_id=result.patient_id)
+
+            order = fetch_order_with_items(order_id, folder_path=folder_path)
+            if order:
+                epaces_dlg = EpacesHelperDialog(order=order, folder_path=folder_path, parent=self)
+                epaces_dlg.exec()
+
+            try:
+                formatted = self.format_order_number(order_id)
+            except Exception:
+                formatted = f"ORD-{order_id:03d}"
+
+            QMessageBox.information(self, "Order Updated", f"Order {formatted} was completed successfully.")
+
+            if hasattr(self, 'load_orders'):
+                self.load_orders()
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Order Updated",
+                f"Could not complete the resumed order:\n{e}",
+            )
+
     def open_order_editor(self, order_id: int) -> None:
         """
         Open the modern Order Editor dialog for the specified order ID.
@@ -1413,9 +1488,17 @@ class MainWindow(PDFViewer):
         This is the new unified interface for viewing/editing orders,
         powered by the domain model (fetch_order_with_items).
         """
-        from dmelogic.ui.order_editor import OrderEditorDialog
-        
         folder_path = getattr(self, "folder_path", None)
+        try:
+            from dmelogic.db.orders import is_incomplete_order
+
+            if is_incomplete_order(order_id, folder_path=folder_path):
+                self._open_incomplete_order_wizard(order_id)
+                return
+        except Exception as status_err:
+            print(f"Could not check incomplete status for order {order_id}: {status_err}")
+
+        from dmelogic.ui.order_editor import OrderEditorDialog
         
         dialog = OrderEditorDialog(
             order_id=order_id,
@@ -1861,8 +1944,20 @@ class MainWindow(PDFViewer):
         def on_accepted():
             if wizard.result:
                 self.create_order_from_wizard(wizard.result)
+
+        def on_saved_for_later(order_id: int):
+            try:
+                if hasattr(self, "orders_status_combo"):
+                    idx = self.orders_status_combo.findText("Incomplete")
+                    if idx >= 0:
+                        self.orders_status_combo.setCurrentIndex(idx)
+                if hasattr(self, "load_orders"):
+                    self.load_orders()
+            except Exception as e:
+                print(f"⚠️ Could not refresh orders after saving incomplete order {order_id}: {e}")
         
         wizard.accepted.connect(on_accepted)
+        wizard.order_saved_for_later.connect(on_saved_for_later)
         wizard.show()
         wizard.raise_()
         wizard.activateWindow()
@@ -2005,7 +2100,7 @@ class MainWindow(PDFViewer):
 
             # Billing type / status from enums (keeps consistency with DB layer)
             billing_type = (result.billing_type or "").strip() or BillingType.INSURANCE.value
-            order_status = OrderStatus.PENDING.value  # new orders start Pending
+            order_status = OrderStatus.ON_HOLD.value if getattr(result, "on_hold", False) else OrderStatus.PENDING.value
 
             # Auto-flag orders created by agent-designated users
             _agent_created = is_current_user_agent()

@@ -16,6 +16,16 @@ from .base import get_connection  # exposed for tests that inject a mock
 
 # Define allowed status transitions (state machine)
 STATUS_TRANSITIONS: dict[OrderStatus, Set[OrderStatus]] = {
+    # Saved-for-later orders that are intentionally unfinished.
+    OrderStatus.INCOMPLETE: {
+        OrderStatus.PENDING,
+        OrderStatus.DOCS_NEEDED,
+        OrderStatus.READY,
+        OrderStatus.UNBILLED,
+        OrderStatus.ON_HOLD,
+        OrderStatus.CANCELLED,
+    },
+
     # Agent-created orders awaiting human approval
     OrderStatus.PENDING_APPROVAL: {
         OrderStatus.PENDING,      # Approve → move to normal Pending
@@ -264,6 +274,7 @@ def get_status_description(status: OrderStatus) -> str:
         Description string explaining what the status means
     """
     descriptions = {
+        OrderStatus.INCOMPLETE: "Order was saved before creation was finished",
         OrderStatus.PENDING: "Order received, awaiting initial processing",
         OrderStatus.DOCS_NEEDED: "Missing required documentation (CMN, POD, prescription, etc.)",
         OrderStatus.READY: "All documentation complete, approved for delivery/billing",

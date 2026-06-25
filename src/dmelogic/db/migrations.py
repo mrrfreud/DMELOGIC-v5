@@ -384,6 +384,25 @@ class Migration014_AddSoftDelete(Migration):
             conn.commit()
         except sqlite3.OperationalError:
             pass
+
+
+class Migration015_AddOrderPlaceOfService(Migration):
+    """Add place_of_service for billing and claim submission."""
+    version = 15
+    description = "Add place_of_service to orders"
+
+    def up(self, conn: sqlite3.Connection) -> None:
+        try:
+            conn.execute("ALTER TABLE orders ADD COLUMN place_of_service TEXT DEFAULT '12'")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            conn.execute("UPDATE orders SET place_of_service = '12' WHERE place_of_service IS NULL OR TRIM(place_of_service) = ''")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
         
         try:
             conn.execute("ALTER TABLE orders ADD COLUMN deleted_by TEXT")
@@ -408,6 +427,7 @@ ORDER_MIGRATIONS = [
     Migration012_AddItemSortOrder(),
     Migration013_AddItemPrescriber(),
     Migration014_AddSoftDelete(),
+    Migration015_AddOrderPlaceOfService(),
 ]
 
 

@@ -12663,6 +12663,8 @@ class PDFViewer(QMainWindow):
             # Register as child window
             if hasattr(self, 'register_child_window'):
                 self.register_child_window(wizard)
+
+            self._wire_order_wizard_handlers(wizard)
             
             wizard.show()
             wizard.raise_()
@@ -12690,6 +12692,8 @@ class PDFViewer(QMainWindow):
             # Register as child window
             if hasattr(self, 'register_child_window'):
                 self.register_child_window(wizard)
+
+            self._wire_order_wizard_handlers(wizard)
             
             wizard.show()
             wizard.raise_()
@@ -12698,6 +12702,60 @@ class PDFViewer(QMainWindow):
             import traceback
             traceback.print_exc()
             QMessageBox.warning(self, "New Order", f"Could not open order wizard: {e}")
+
+    def _wire_order_wizard_handlers(self, wizard):
+        def on_accepted():
+            result = getattr(wizard, "result", None)
+            if result:
+                self._save_order_wizard_result(result)
+
+        wizard.accepted.connect(on_accepted)
+        if hasattr(wizard, "order_saved_for_later"):
+            wizard.order_saved_for_later.connect(self._handle_order_wizard_saved_for_later)
+
+    def _handle_order_wizard_saved_for_later(self, order_id: int):
+        try:
+            if hasattr(self, "orders_status_combo"):
+                idx = self.orders_status_combo.findText("Incomplete")
+                if idx >= 0:
+                    self.orders_status_combo.setCurrentIndex(idx)
+            if hasattr(self, "load_orders"):
+                self.load_orders()
+        except Exception as e:
+            print(f"⚠️ Could not refresh orders after saving incomplete order {order_id}: {e}")
+
+    def _save_order_wizard_result(self, result):
+        try:
+            resume_order_id = int(getattr(result, "resume_order_id", 0) or 0)
+            if resume_order_id:
+                from dmelogic.db.orders import update_incomplete_order_from_wizard_result
+
+                order_id = update_incomplete_order_from_wizard_result(
+                    resume_order_id,
+                    result,
+                    complete=True,
+                    folder_path=getattr(self, "folder_path", None),
+                )
+            else:
+                from dmelogic.db.orders import create_order_from_wizard_result
+
+                order_id = create_order_from_wizard_result(
+                    result,
+                    folder_path=getattr(self, "folder_path", None),
+                )
+            try:
+                if hasattr(self, "load_orders"):
+                    self.load_orders()
+            except Exception:
+                pass
+
+            order_label = self.format_order_number(order_id) if hasattr(self, "format_order_number") else f"ORD-{order_id:03d}"
+            action = "updated" if resume_order_id else "created"
+            QMessageBox.information(self, "Order Created", f"Order {order_label} {action} successfully.")
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Order Created", f"Could not create order from wizard:\n{e}")
 
     def _dash_new_patient(self):
         """Open new patient dialog from dashboard."""
@@ -17312,11 +17370,45 @@ class PDFViewer(QMainWindow):
             if btn:
                 btn.setEnabled(has_selection)
 
+    def _open_incomplete_order_wizard(self, order_id: int):
+        """Resume an incomplete order in the New Order Wizard."""
+        try:
+            from dmelogic.ui.order_wizard import OrderWizard
+
+            wizard = OrderWizard(
+                self,
+                folder_path=getattr(self, "folder_path", None),
+                resume_order_id=order_id,
+            )
+            if hasattr(self, "register_child_window"):
+                try:
+                    self.register_child_window(wizard)
+                except Exception:
+                    pass
+            self._wire_order_wizard_handlers(wizard)
+            wizard.show()
+            wizard.raise_()
+            wizard.activateWindow()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.warning(self, "Continue Order", f"Could not resume incomplete order ORD-{order_id:03d}: {e}")
+
     def open_order_editor(self, order_id: int):
         """Open the modern Order Editor dialog for the provided order id."""
         if not order_id:
             QMessageBox.warning(self, "Open Order", "No order number is attached to this entry yet.")
             return
+
+        folder_path = getattr(self, "folder_path", None)
+        try:
+            from dmelogic.db.orders import is_incomplete_order
+
+            if is_incomplete_order(order_id, folder_path=folder_path):
+                self._open_incomplete_order_wizard(order_id)
+                return
+        except Exception as status_err:
+            print(f"Could not check incomplete status for order {order_id}: {status_err}")
 
         try:
             from dmelogic.ui.order_editor import OrderEditorDialog
@@ -17328,7 +17420,6 @@ class PDFViewer(QMainWindow):
             )
             return
 
-        folder_path = getattr(self, "folder_path", None)
         try:
             dialog = OrderEditorDialog(order_id=order_id, folder_path=folder_path, parent=self)
         except Exception as init_err:
@@ -17361,26 +17452,35 @@ class PDFViewer(QMainWindow):
         except Exception:
             pass
 
+        def _on_editor_finished(_result=None):
+            try:
+                if hasattr(self, "load_orders"):
+                    self.load_orders()
+            except Exception as refresh_err:
+                print(f"Order table refresh after editor close failed: {refresh_err}")
+            try:
+                self.load_must_go_out_entries()
+            except Exception:
+                pass
+
         try:
-            dialog.exec()
-        except Exception as exec_err:
+            dialog.finished.connect(_on_editor_finished)
+        except Exception:
+            pass
+
+        try:
+            dialog.setModal(False)
+            dialog.setWindowModality(Qt.WindowModality.NonModal)
+            dialog.show()
+            dialog.raise_()
+            dialog.activateWindow()
+        except Exception as show_err:
             QMessageBox.critical(
                 self,
                 "Order Editor",
-                f"The order editor crashed while opening order {order_id}:\n{exec_err}"
+                f"The order editor crashed while opening order {order_id}:\n{show_err}"
             )
             return
-
-        # Final refresh pass in case dialog mutated data without emitting signal
-        try:
-            if hasattr(self, "load_orders"):
-                self.load_orders()
-        except Exception as refresh_err:
-            print(f"Order table refresh after editor close failed: {refresh_err}")
-        try:
-            self.load_must_go_out_entries()
-        except Exception:
-            pass
 
     def on_order_selected(self, row_index):
         """Update summary label when an order is selected."""
@@ -17500,6 +17600,8 @@ class PDFViewer(QMainWindow):
                 except (KeyError, IndexError):
                     patient_dob = None
                 status = order["order_status"]
+                status_lower = (status or "").strip().lower()
+                order_is_cancelled_for_display = "cancelled" in status_lower
                 try:
                     if order["deleted_at"]:
                         continue
@@ -17534,8 +17636,9 @@ class PDFViewer(QMainWindow):
                 if not any(oid == order_id for _, oid in self._base_to_orders[base_order_id]):
                     self._base_to_orders[base_order_id].append((refill_no_int, order_id))
                 
-                # Skip older refills — only show the latest refill order per chain
-                if refilled_for_display:
+                # Skip older refills, but keep cancelled fills available so the
+                # "Show cancelled orders" option can actually reveal them.
+                if refilled_for_display and not order_is_cancelled_for_display:
                     continue
                 
                 try:
@@ -17652,7 +17755,7 @@ class PDFViewer(QMainWindow):
                     del_pu_raw = pickup_date or delivery_date or ""
                     if del_pu_raw in ("01/01/2000", "1/1/2000"):
                         del_pu_raw = ""
-                    _status_lc = (status or "").strip().lower()
+                    _status_lc = status_lower
                     if not any(k in _status_lc for k in ("delivered", "picked up", "shipped")):
                         del_pu_raw = ""
                     try:
@@ -17839,6 +17942,7 @@ class PDFViewer(QMainWindow):
                         _clean_status = status_text or "Pending"
                         _status_styles = {
                             "Paid":       (QColor('#22c55e'), QColor(34,  197,  94, 45)),
+                            "Incomplete": (QColor('#f97316'), QColor(249, 115,  22, 45)),
                             "Billed":     (QColor('#14b8a6'), QColor(20,  184, 166, 45)),
                             "Delivered":  (QColor('#22c55e'), QColor(34,  197,  94, 45)),
                             "Picked Up":  (QColor('#22c55e'), QColor(34,  197,  94, 45)),
@@ -17941,9 +18045,17 @@ class PDFViewer(QMainWindow):
             
             print(f"✅ Loaded {len(orders)} orders (expanded to item rows)")
             self._orders_updating = False
+            try:
+                self.apply_table_filters()
+            except Exception as filter_err:
+                print(f"Order table filter refresh failed after load: {filter_err}")
             
         except Exception as e:
             print(f"Error loading orders: {e}")
+            try:
+                self._orders_updating = False
+            except Exception:
+                pass
     
     def sort_orders_table(self, column):
         """Custom sort that keeps order items grouped together."""
@@ -17968,6 +18080,7 @@ class PDFViewer(QMainWindow):
             """Return a stable status rank for sorting by workflow state."""
             text = (value or "").strip().lower()
             rank_map = {
+                "incomplete": 5,
                 "open": 10,
                 "pending": 20,
                 "processing": 30,
@@ -18060,6 +18173,8 @@ class PDFViewer(QMainWindow):
                     row_data.append({
                         'text': item.text(),
                         'data': item.data(Qt.ItemDataRole.UserRole),
+                        'data_1': item.data(Qt.ItemDataRole.UserRole + 1),
+                        'data_2': item.data(Qt.ItemDataRole.UserRole + 2),
                         'background': item.background(),
                         'foreground': item.foreground(),
                         'font': item.font(),
@@ -18082,6 +18197,8 @@ class PDFViewer(QMainWindow):
                     if cell_data:
                         item = QTableWidgetItem(cell_data['text'])
                         item.setData(Qt.ItemDataRole.UserRole, cell_data['data'])
+                        item.setData(Qt.ItemDataRole.UserRole + 1, cell_data.get('data_1'))
+                        item.setData(Qt.ItemDataRole.UserRole + 2, cell_data.get('data_2'))
                         item.setBackground(cell_data['background'])
                         item.setForeground(cell_data['foreground'])
                         item.setFont(cell_data['font'])
@@ -18089,6 +18206,10 @@ class PDFViewer(QMainWindow):
                         self.orders_table.setItem(new_row, col, item)
         
         self._orders_updating = False
+        try:
+            self.apply_table_filters()
+        except Exception as filter_err:
+            print(f"Order table filter refresh failed after sort: {filter_err}")
     
     def apply_table_filters(self):
         """Apply filters to the orders table based on filter inputs with partial name matching.
@@ -18110,6 +18231,8 @@ class PDFViewer(QMainWindow):
                 if hasattr(self, 'orders_show_cancelled_checkbox')
                 else True
             )
+            if status_filter.strip().lower() == "cancelled":
+                show_cancelled_orders = True
         else:
             # Legacy filter fields - should not reach here with new layout
             return
@@ -18291,7 +18414,7 @@ class PDFViewer(QMainWindow):
 
             # Filter by Order Date range
             if matches_search and from_date:
-                date_item = self.orders_table.item(row, 9)  # Column 9 is Order Date
+                date_item = self.orders_table.item(row, 8)  # Column 8 is Order Date
                 date_str = date_item.text() if date_item else ""
                 if date_str:
                     d = QDate.fromString(date_str, "yyyy-MM-dd")
@@ -18365,6 +18488,23 @@ class PDFViewer(QMainWindow):
     def on_orders_filter_changed(self):
         """Handle any filter change in the new Orders UI."""
         self.apply_table_filters()
+
+    def on_orders_show_cancelled_toggled(self, _checked=False):
+        """Reload orders when cancelled rows are toggled so newly cancelled rows are available."""
+        if getattr(self, '_orders_reloading_for_cancelled_filter', False):
+            self.apply_table_filters()
+            return
+        try:
+            self._orders_reloading_for_cancelled_filter = True
+            self.load_orders()
+        except Exception as exc:
+            print(f"Reload after show-cancelled toggle failed: {exc}")
+            try:
+                self.apply_table_filters()
+            except Exception:
+                pass
+        finally:
+            self._orders_reloading_for_cancelled_filter = False
     
     def clear_table_filters(self):
         """Clear all table filters."""
@@ -24759,6 +24899,7 @@ class PDFViewer(QMainWindow):
             secondary_insurance TEXT,
             secondary_insurance_id TEXT,
             billing_selection TEXT,
+            place_of_service TEXT DEFAULT '12',
             order_status TEXT DEFAULT 'Pending',
             created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -24901,6 +25042,11 @@ class PDFViewer(QMainWindow):
         # Billing alert note — shown as popup when EPACES helper opens
         try:
             cursor.execute("ALTER TABLE orders ADD COLUMN epaces_alert TEXT")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        try:
+            cursor.execute("ALTER TABLE orders ADD COLUMN place_of_service TEXT DEFAULT '12'")
         except sqlite3.OperationalError:
             pass  # Column already exists
         

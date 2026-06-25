@@ -9,6 +9,7 @@ from .base import get_connection
 from .models import OrderInput, OrderItemInput, Order, OrderItem, OrderStatus, BillingType
 from .converters import safe_int, row_to_order, row_to_order_item
 from dmelogic.config import debug_log
+from dmelogic.place_of_service import place_of_service_code
 
 # Audit logging - import lazily to avoid circular imports
 def _audit_action(action: str, resource_id: Any, details: str = None):
@@ -21,6 +22,76 @@ def _audit_action(action: str, resource_id: Any, details: str = None):
 
 if TYPE_CHECKING:
     from dmelogic.ui.order_wizard import OrderWizardResult, OrderItem as WizardOrderItem  # type: ignore
+
+
+INCOMPLETE_ORDER_DRAFT_NOTE = (
+    "Saved for later from New Order Wizard. "
+    "Finish missing patient, RX, prescriber, item, and document details before processing."
+)
+
+
+def _strip_incomplete_draft_note(notes: str) -> str:
+    text = (notes or "").strip()
+    if not text:
+        return ""
+    text = text.replace(INCOMPLETE_ORDER_DRAFT_NOTE, "")
+    return "\n".join(line.rstrip() for line in text.splitlines()).strip()
+
+
+def _notes_with_incomplete_draft_note(notes: str) -> str:
+    user_notes = _strip_incomplete_draft_note(notes)
+    return f"{user_notes}\n\n{INCOMPLETE_ORDER_DRAFT_NOTE}" if user_notes else INCOMPLETE_ORDER_DRAFT_NOTE
+
+
+def _table_columns(cur: sqlite3.Cursor, table: str) -> set[str]:
+    cur.execute(f"PRAGMA table_info({table})")
+    return {str(row[1]) for row in cur.fetchall()}
+
+
+def _insert_dynamic(
+    cur: sqlite3.Cursor,
+    table: str,
+    values: Dict[str, Any],
+    table_columns: Optional[set[str]] = None,
+) -> None:
+    columns = table_columns if table_columns is not None else _table_columns(cur, table)
+    insert_columns = [column for column in values.keys() if column in columns]
+    if not insert_columns:
+        raise sqlite3.OperationalError(f"No matching columns found for {table}")
+
+    placeholders = ", ".join("?" for _ in insert_columns)
+    quoted_columns = ", ".join(insert_columns)
+    params = [values[column] for column in insert_columns]
+    cur.execute(f"INSERT INTO {table} ({quoted_columns}) VALUES ({placeholders})", params)
+
+
+def _update_dynamic(
+    cur: sqlite3.Cursor,
+    table: str,
+    values: Dict[str, Any],
+    where_clause: str,
+    where_params: tuple[Any, ...],
+    table_columns: Optional[set[str]] = None,
+    raw_sets: Optional[Dict[str, str]] = None,
+) -> None:
+    columns = table_columns if table_columns is not None else _table_columns(cur, table)
+    set_clauses: list[str] = []
+    params: list[Any] = []
+
+    for column, value in values.items():
+        if column in columns:
+            set_clauses.append(f"{column} = ?")
+            params.append(value)
+
+    for column, expression in (raw_sets or {}).items():
+        if column in columns:
+            set_clauses.append(f"{column} = {expression}")
+
+    if not set_clauses:
+        return
+
+    params.extend(where_params)
+    cur.execute(f"UPDATE {table} SET {', '.join(set_clauses)} WHERE {where_clause}", params)
 
 
 def wizard_item_to_input(w_item: "WizardOrderItem") -> OrderItemInput:
@@ -1157,6 +1228,16 @@ def create_order(order_input: OrderInput, folder_path: Optional[str] = None, con
         )
         
         order_id = int(cur.lastrowid)
+
+        try:
+            order_columns = _table_columns(cur, "orders")
+            if "place_of_service" in order_columns:
+                cur.execute(
+                    "UPDATE orders SET place_of_service = ? WHERE id = ?",
+                    (place_of_service_code(getattr(order_input, "place_of_service", None)), order_id),
+                )
+        except sqlite3.OperationalError:
+            pass
         
         # Insert order items with safe conversions
         for item in order_input.items:
@@ -1252,6 +1333,7 @@ def create_order(order_input: OrderInput, folder_path: Optional[str] = None, con
 def create_order_from_wizard_result(
     result: "OrderWizardResult",
     folder_path: Optional[str] = None,
+    conn: Optional[sqlite3.Connection] = None,
 ) -> int:
     """
     Persist a new order created from the OrderWizard into orders.db.
@@ -1260,8 +1342,9 @@ def create_order_from_wizard_result(
     - Writes to 'order_items' with minimal data (HCPCS, description, qty, refills, days).
     - Returns the new orders.id primary key.
     """
-    # Resolve orders.db via the shared base helper
-    conn = get_connection("orders.db", folder_path=folder_path)
+    owns_connection = conn is None
+    if conn is None:
+        conn = get_connection("orders.db", folder_path=folder_path)
     try:
         cur = conn.cursor()
 
@@ -1271,11 +1354,13 @@ def create_order_from_wizard_result(
 
         patient_name = (result.patient_name or "").strip()
         patient_last, patient_first = _split_patient_name(patient_name)
+        patient_last = patient_last or "[Unknown]"
+        patient_first = patient_first or "[Unknown]"
         patient_dob = (result.patient_dob or "").strip()
         patient_phone = (result.patient_phone or "").strip()
 
-        prescriber_name = (result.prescriber_name or "").strip()
-        prescriber_npi = (result.prescriber_npi or "").strip()
+        prescriber_name = (result.prescriber_name or "").strip() or "[Unknown]"
+        prescriber_npi = (result.prescriber_npi or "").strip() or "[Unknown]"
 
         billing_selection = (result.billing_type or "").strip()
         delivery_date = (result.delivery_date or "").strip()
@@ -1442,11 +1527,404 @@ def create_order_from_wizard_result(
                 ),
             )
 
-        conn.commit()
+        if owns_connection:
+            conn.commit()
         return order_id
 
     finally:
-        conn.close()
+        if owns_connection:
+            conn.close()
+
+
+def create_incomplete_order_from_wizard_result(
+    result: "OrderWizardResult",
+    folder_path: Optional[str] = None,
+    conn: Optional[sqlite3.Connection] = None,
+) -> int:
+    """Persist a partially completed OrderWizard result as an editable order."""
+    from pathlib import Path
+
+    owns_connection = conn is None
+    if conn is None:
+        conn = get_connection("orders.db", folder_path=folder_path)
+    try:
+        cur = conn.cursor()
+
+        today_str = date.today().strftime("%m/%d/%Y")
+        rx_date_str = (getattr(result, "rx_date", "") or "").strip() or "[Incomplete]"
+        order_date_str = (getattr(result, "order_date", "") or "").strip() or today_str
+
+        patient_name = (getattr(result, "patient_name", "") or "").strip()
+        patient_last, patient_first = _split_patient_name(patient_name)
+        patient_last = patient_last or "[Incomplete]"
+        patient_first = patient_first or "[Incomplete]"
+        patient_display = patient_name or f"{patient_last}, {patient_first}"
+
+        prescriber_name = (getattr(result, "prescriber_name", "") or "").strip() or "[Incomplete]"
+        prescriber_npi = (getattr(result, "prescriber_npi", "") or "").strip() or "[Incomplete]"
+        billing_selection = (getattr(result, "billing_type", "") or "").strip()
+        delivery_date = (getattr(result, "delivery_date", "") or "").strip()
+
+        notes = _notes_with_incomplete_draft_note(getattr(result, "notes", "") or "")
+
+        insurance_name = (getattr(result, "insurance_name", "") or "").strip()
+        insurance_kind = (getattr(result, "insurance_kind", "") or "").strip()
+        insurance_member_id = (getattr(result, "insurance_member_id", "") or "").strip()
+        primary_insurance = insurance_name if insurance_kind == "Primary" else ""
+        primary_insurance_id = insurance_member_id if insurance_kind == "Primary" else ""
+        secondary_insurance = insurance_name if insurance_kind == "Secondary" else ""
+        secondary_insurance_id = insurance_member_id if insurance_kind == "Secondary" else ""
+
+        attachment_paths = list(getattr(result, "attachment_paths", []) or [])
+        attached_rx_files = ";".join(Path(path).name for path in attachment_paths if path)
+
+        patient_id = getattr(result, "patient_id", 0) or 0
+        refill_group_id = getattr(result, "refill_group_id", None)
+        rx_origin = (getattr(result, "rx_origin", "") or "").strip()
+
+        order_columns = _table_columns(cur, "orders")
+        _insert_dynamic(
+            cur,
+            "orders",
+            {
+                "patient_id": patient_id or None,
+                "rx_date": rx_date_str,
+                "order_date": order_date_str,
+                "patient_last_name": patient_last,
+                "patient_first_name": patient_first,
+                "patient_dob": (getattr(result, "patient_dob", "") or "").strip() or None,
+                "patient_phone": (getattr(result, "patient_phone", "") or "").strip() or None,
+                "patient_name": patient_display,
+                "prescriber_name": prescriber_name,
+                "prescriber_npi": prescriber_npi,
+                "prescriber_phone": (getattr(result, "prescriber_phone", "") or "").strip() or None,
+                "prescriber_fax": (getattr(result, "prescriber_fax", "") or "").strip() or None,
+                "rx_date_2": (getattr(result, "rx_date_2", "") or "").strip() or None,
+                "prescriber_name_2": (getattr(result, "prescriber_name_2", "") or "").strip() or None,
+                "prescriber_npi_2": (getattr(result, "prescriber_npi_2", "") or "").strip() or None,
+                "prescriber_phone_2": (getattr(result, "prescriber_phone_2", "") or "").strip() or None,
+                "prescriber_fax_2": (getattr(result, "prescriber_fax_2", "") or "").strip() or None,
+                "primary_insurance": primary_insurance or None,
+                "primary_insurance_id": primary_insurance_id or None,
+                "secondary_insurance": secondary_insurance or None,
+                "secondary_insurance_id": secondary_insurance_id or None,
+                "billing_selection": billing_selection or None,
+                "order_status": OrderStatus.INCOMPLETE.value,
+                "delivery_date": delivery_date or None,
+                "notes": notes,
+                "attached_rx_files": attached_rx_files or None,
+                "doctor_directions": (getattr(result, "doctor_directions", "") or "").strip() or None,
+                "icd_code_1": (getattr(result, "icd_code_1", "") or "").strip() or None,
+                "icd_code_2": (getattr(result, "icd_code_2", "") or "").strip() or None,
+                "icd_code_3": (getattr(result, "icd_code_3", "") or "").strip() or None,
+                "icd_code_4": (getattr(result, "icd_code_4", "") or "").strip() or None,
+                "icd_code_5": (getattr(result, "icd_code_5", "") or "").strip() or None,
+                "parent_order_id": None,
+                "refill_number": 0,
+                "is_locked": 0,
+                "refill_group_id": refill_group_id,
+                "rx_origin": rx_origin or None,
+            },
+            order_columns,
+        )
+
+        order_id = int(cur.lastrowid)
+        if refill_group_id is None and "refill_group_id" in order_columns:
+            cur.execute("UPDATE orders SET refill_group_id = ? WHERE id = ?", (order_id, order_id))
+
+        item_date_str = order_date_str or today_str
+        order_item_columns = _table_columns(cur, "order_items")
+        for item in getattr(result, "items", []) or []:
+            item_input = wizard_item_to_input(item)
+            hcpcs = (item_input.hcpcs or "").strip()
+            desc = (item_input.description or "").strip()
+            directions = (item_input.directions or "").strip()
+            qty = safe_int(item_input.quantity, default=0, field_name=f"incomplete item.quantity ({hcpcs})")
+            refills = safe_int(item_input.refills, default=0, field_name=f"incomplete item.refills ({hcpcs})")
+            days = safe_int(item_input.days_supply, default=0, field_name=f"incomplete item.days_supply ({hcpcs})")
+
+            if not any([hcpcs, desc, directions, qty, refills, days]):
+                continue
+
+            _insert_dynamic(
+                cur,
+                "order_items",
+                {
+                    "order_id": order_id,
+                    "rx_no": "",
+                    "hcpcs_code": hcpcs,
+                    "description": desc,
+                    "item_number": "",
+                    "refills": str(refills) if refills else "",
+                    "day_supply": str(days) if days else "",
+                    "days_supply": str(days) if days else "",
+                    "qty": str(qty) if qty else "",
+                    "quantity": str(qty) if qty else "",
+                    "cost_ea": "",
+                    "total": "",
+                    "pa_number": "",
+                    "directions": directions,
+                    "last_filled_date": item_date_str,
+                    "is_rental": 1 if item_input.is_rental else 0,
+                    "modifier1": item_input.modifier1,
+                    "modifier2": item_input.modifier2,
+                    "modifier3": item_input.modifier3,
+                    "modifier4": item_input.modifier4,
+                },
+                order_item_columns,
+            )
+
+        if owns_connection:
+            conn.commit()
+        return order_id
+    except Exception as e:
+        debug_log(f"DB Error in create_incomplete_order_from_wizard_result: {e}")
+        raise
+    finally:
+        if owns_connection:
+            conn.close()
+
+
+def is_incomplete_order(
+    order_id: int,
+    folder_path: Optional[str] = None,
+    conn: Optional[sqlite3.Connection] = None,
+) -> bool:
+    """Return True when the order exists and is saved as an incomplete wizard draft."""
+    owns_connection = conn is None
+    if conn is None:
+        conn = get_connection("orders.db", folder_path=folder_path)
+
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT COALESCE(order_status, '') FROM orders WHERE id = ?", (order_id,))
+        row = cur.fetchone()
+        return bool(row and str(row[0] or "").strip().lower() == OrderStatus.INCOMPLETE.value.lower())
+    finally:
+        if owns_connection:
+            conn.close()
+
+
+def fetch_incomplete_order_wizard_data(
+    order_id: int,
+    folder_path: Optional[str] = None,
+    conn: Optional[sqlite3.Connection] = None,
+) -> Optional[Dict[str, Any]]:
+    """Fetch an incomplete order and raw item rows for New Order Wizard resume."""
+    owns_connection = conn is None
+    if conn is None:
+        conn = get_connection("orders.db", folder_path=folder_path)
+
+    old_factory = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM orders WHERE id = ?", (order_id,))
+        order_row = cur.fetchone()
+        if not order_row:
+            return None
+        status = str(order_row["order_status"] or "").strip()
+        if status.lower() != OrderStatus.INCOMPLETE.value.lower():
+            return None
+
+        try:
+            cur.execute(
+                "SELECT * FROM order_items WHERE order_id = ? ORDER BY COALESCE(sort_order, id) ASC, id ASC",
+                (order_id,),
+            )
+        except sqlite3.OperationalError:
+            cur.execute("SELECT * FROM order_items WHERE order_id = ? ORDER BY id ASC", (order_id,))
+
+        return {
+            "order": dict(order_row),
+            "items": [dict(row) for row in cur.fetchall()],
+        }
+    finally:
+        conn.row_factory = old_factory
+        if owns_connection:
+            conn.close()
+
+
+def update_incomplete_order_from_wizard_result(
+    order_id: int,
+    result: "OrderWizardResult",
+    *,
+    complete: bool = False,
+    folder_path: Optional[str] = None,
+    conn: Optional[sqlite3.Connection] = None,
+) -> int:
+    """Update an existing incomplete wizard draft, optionally completing it in place."""
+    from pathlib import Path
+
+    owns_connection = conn is None
+    if conn is None:
+        conn = get_connection("orders.db", folder_path=folder_path)
+
+    old_factory = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM orders WHERE id = ?", (order_id,))
+        existing = cur.fetchone()
+        if not existing:
+            raise ValueError(f"Order {order_id} was not found.")
+
+        existing_status = str(existing["order_status"] or "").strip()
+        if existing_status.lower() != OrderStatus.INCOMPLETE.value.lower():
+            raise ValueError(f"Order {order_id} is not an incomplete order.")
+        order_columns = _table_columns(cur, "orders")
+
+        today_str = date.today().strftime("%m/%d/%Y")
+        rx_date_str = (getattr(result, "rx_date", "") or "").strip()
+        order_date_str = (getattr(result, "order_date", "") or "").strip() or today_str
+        if not complete and not rx_date_str:
+            rx_date_str = "[Incomplete]"
+
+        patient_name = (getattr(result, "patient_name", "") or "").strip()
+        patient_last, patient_first = _split_patient_name(patient_name)
+        if complete:
+            patient_last = patient_last or "[Unknown]"
+            patient_first = patient_first or "[Unknown]"
+        else:
+            patient_last = patient_last or "[Incomplete]"
+            patient_first = patient_first or "[Incomplete]"
+        patient_display = patient_name or f"{patient_last}, {patient_first}"
+
+        if complete:
+            prescriber_name = (getattr(result, "prescriber_name", "") or "").strip() or "[Unknown]"
+            prescriber_npi = (getattr(result, "prescriber_npi", "") or "").strip() or "[Unknown]"
+            notes = _strip_incomplete_draft_note(getattr(result, "notes", "") or "")
+            order_status = OrderStatus.ON_HOLD.value if getattr(result, "on_hold", False) else OrderStatus.UNBILLED.value
+        else:
+            prescriber_name = (getattr(result, "prescriber_name", "") or "").strip() or "[Incomplete]"
+            prescriber_npi = (getattr(result, "prescriber_npi", "") or "").strip() or "[Incomplete]"
+            notes = _notes_with_incomplete_draft_note(getattr(result, "notes", "") or "")
+            order_status = OrderStatus.INCOMPLETE.value
+
+        insurance_name = (getattr(result, "insurance_name", "") or "").strip()
+        insurance_kind = (getattr(result, "insurance_kind", "") or "").strip()
+        insurance_member_id = (getattr(result, "insurance_member_id", "") or "").strip()
+        primary_insurance = insurance_name if insurance_kind == "Primary" else ""
+        primary_insurance_id = insurance_member_id if insurance_kind == "Primary" else ""
+        secondary_insurance = insurance_name if insurance_kind == "Secondary" else ""
+        secondary_insurance_id = insurance_member_id if insurance_kind == "Secondary" else ""
+
+        attachment_paths = list(getattr(result, "attachment_paths", []) or [])
+        attached_rx_files = ";".join(Path(path).name for path in attachment_paths if path)
+
+        patient_id = getattr(result, "patient_id", 0) or 0
+        refill_group_id = getattr(result, "refill_group_id", None)
+        if refill_group_id is None:
+            try:
+                refill_group_id = existing["refill_group_id"] or order_id
+            except Exception:
+                refill_group_id = order_id
+
+        _update_dynamic(
+            cur,
+            "orders",
+            {
+                "patient_id": patient_id or None,
+                "rx_date": rx_date_str,
+                "order_date": order_date_str,
+                "patient_last_name": patient_last,
+                "patient_first_name": patient_first,
+                "patient_dob": (getattr(result, "patient_dob", "") or "").strip() or None,
+                "patient_phone": (getattr(result, "patient_phone", "") or "").strip() or None,
+                "patient_name": patient_display,
+                "prescriber_name": prescriber_name,
+                "prescriber_npi": prescriber_npi,
+                "prescriber_phone": (getattr(result, "prescriber_phone", "") or "").strip() or None,
+                "prescriber_fax": (getattr(result, "prescriber_fax", "") or "").strip() or None,
+                "rx_date_2": (getattr(result, "rx_date_2", "") or "").strip() or None,
+                "prescriber_name_2": (getattr(result, "prescriber_name_2", "") or "").strip() or None,
+                "prescriber_npi_2": (getattr(result, "prescriber_npi_2", "") or "").strip() or None,
+                "prescriber_phone_2": (getattr(result, "prescriber_phone_2", "") or "").strip() or None,
+                "prescriber_fax_2": (getattr(result, "prescriber_fax_2", "") or "").strip() or None,
+                "primary_insurance": primary_insurance or None,
+                "primary_insurance_id": primary_insurance_id or None,
+                "secondary_insurance": secondary_insurance or None,
+                "secondary_insurance_id": secondary_insurance_id or None,
+                "billing_selection": (getattr(result, "billing_type", "") or "").strip() or None,
+                "order_status": order_status,
+                "delivery_date": (getattr(result, "delivery_date", "") or "").strip() or None,
+                "notes": notes or None,
+                "attached_rx_files": attached_rx_files or None,
+                "doctor_directions": (getattr(result, "doctor_directions", "") or "").strip() or None,
+                "icd_code_1": (getattr(result, "icd_code_1", "") or "").strip() or None,
+                "icd_code_2": (getattr(result, "icd_code_2", "") or "").strip() or None,
+                "icd_code_3": (getattr(result, "icd_code_3", "") or "").strip() or None,
+                "icd_code_4": (getattr(result, "icd_code_4", "") or "").strip() or None,
+                "icd_code_5": (getattr(result, "icd_code_5", "") or "").strip() or None,
+                "refill_group_id": refill_group_id,
+                "rx_origin": (getattr(result, "rx_origin", "") or "").strip() or None,
+            },
+            "id = ?",
+            (order_id,),
+            order_columns,
+            raw_sets={"updated_date": "CURRENT_TIMESTAMP"},
+        )
+
+        cur.execute("DELETE FROM order_items WHERE order_id = ?", (order_id,))
+
+        item_date_str = order_date_str or today_str
+        order_item_columns = _table_columns(cur, "order_items")
+        for item in getattr(result, "items", []) or []:
+            item_input = wizard_item_to_input(item)
+            hcpcs = (item_input.hcpcs or "").strip()
+            desc = (item_input.description or "").strip()
+            directions = (item_input.directions or "").strip()
+            qty_default = 1 if complete else 0
+            days_default = 30 if complete else 0
+            qty = safe_int(item_input.quantity, default=qty_default, field_name=f"wizard item.quantity ({hcpcs})")
+            refills = safe_int(item_input.refills, default=0, field_name=f"wizard item.refills ({hcpcs})")
+            days = safe_int(item_input.days_supply, default=days_default, field_name=f"wizard item.days_supply ({hcpcs})")
+
+            if complete:
+                if not hcpcs and not desc:
+                    continue
+            elif not any([hcpcs, desc, directions, qty, refills, days]):
+                continue
+
+            _insert_dynamic(
+                cur,
+                "order_items",
+                {
+                    "order_id": order_id,
+                    "rx_no": "",
+                    "hcpcs_code": hcpcs,
+                    "description": desc,
+                    "item_number": "",
+                    "refills": str(refills) if (complete or refills) else "",
+                    "day_supply": str(days) if (complete or days) else "",
+                    "days_supply": str(days) if (complete or days) else "",
+                    "qty": str(qty) if (complete or qty) else "",
+                    "quantity": str(qty) if (complete or qty) else "",
+                    "cost_ea": "",
+                    "total": "",
+                    "pa_number": "",
+                    "directions": directions,
+                    "last_filled_date": item_date_str,
+                    "is_rental": 1 if item_input.is_rental else 0,
+                    "modifier1": item_input.modifier1,
+                    "modifier2": item_input.modifier2,
+                    "modifier3": item_input.modifier3,
+                    "modifier4": item_input.modifier4,
+                },
+                order_item_columns,
+            )
+
+        if owns_connection:
+            conn.commit()
+        _audit_action("update", order_id, "Incomplete order updated from New Order Wizard")
+        return order_id
+    except Exception as e:
+        debug_log(f"DB Error in update_incomplete_order_from_wizard_result({order_id}): {e}")
+        raise
+    finally:
+        conn.row_factory = old_factory
+        if owns_connection:
+            conn.close()
 
 
 def create_order_from_wizard_result_uow(
@@ -1485,11 +1963,13 @@ def create_order_from_wizard_result_uow(
 
         patient_name = (result.patient_name or "").strip()
         patient_last, patient_first = _split_patient_name(patient_name)
+        patient_last = patient_last or "[Unknown]"
+        patient_first = patient_first or "[Unknown]"
         patient_dob = (result.patient_dob or "").strip()
         patient_phone = (result.patient_phone or "").strip()
 
-        prescriber_name = (result.prescriber_name or "").strip()
-        prescriber_npi = (result.prescriber_npi or "").strip()
+        prescriber_name = (result.prescriber_name or "").strip() or "[Unknown]"
+        prescriber_npi = (result.prescriber_npi or "").strip() or "[Unknown]"
 
         billing_selection = (result.billing_type or "").strip()
         delivery_date = (result.delivery_date or "").strip()

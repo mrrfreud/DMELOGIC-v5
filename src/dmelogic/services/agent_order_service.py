@@ -152,6 +152,7 @@ def create_order_as_agent(
     primary_insurance: Optional[str] = None,
     primary_insurance_id: Optional[str] = None,
     billing_type: Optional[str] = None,
+    place_of_service: Optional[str] = None,
     # ---- Diagnosis (optional) ----
     icd_codes: Optional[List[str]] = None,
     # ---- Items (at least one required — may be placeholders) ----
@@ -199,6 +200,7 @@ def create_order_as_agent(
         primary_insurance:   Insurance name.
         primary_insurance_id: Member / policy ID.
         billing_type:        "Insurance", "Cash", "Rental", "Medicare".
+        place_of_service:    2-digit billing place of service code; defaults to "12" Home.
         icd_codes:           List of ICD-10 diagnosis codes.
         rx_origin:           How the Rx arrived — e.g. "Fax", "Phone",
                              "eRx", "Walk-in".
@@ -304,6 +306,7 @@ def create_order_as_agent(
         primary_insurance=primary_insurance,
         primary_insurance_id=primary_insurance_id,
         billing_type=billing_type or "Insurance",
+        place_of_service=place_of_service or "12",
         order_status=OrderStatus.PENDING.value,  # will be overridden to Pending Approval
         icd_code_1=icd_list[0] if len(icd_list) > 0 else None,
         icd_code_2=icd_list[1] if len(icd_list) > 1 else None,

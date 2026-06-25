@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 class OrderStatus(Enum):
     """Order status enumeration with business meaning."""
     PENDING = "Pending"
+    INCOMPLETE = "Incomplete"
     PENDING_APPROVAL = "Pending Approval"
     VERIFIED = "Verified"
     SUBMITTED = "Submitted"
@@ -41,7 +42,7 @@ class OrderStatus(Enum):
     @property
     def can_be_edited(self) -> bool:
         """Check if order can be modified."""
-        return self in (OrderStatus.PENDING, OrderStatus.ON_HOLD)
+        return self in (OrderStatus.INCOMPLETE, OrderStatus.PENDING, OrderStatus.ON_HOLD)
     
     @property
     def can_be_cancelled(self) -> bool:
@@ -270,6 +271,7 @@ class Order:
     order_status: OrderStatus = OrderStatus.PENDING
     billing_selection: str = "Insurance"
     billing_type: Optional["BillingType"] = None  # Set by domain layer, not legacy DB
+    place_of_service: str = "12"
     # Hold scheduling
     hold_until_date: Optional[date] = None
     hold_resume_status: Optional[OrderStatus] = None
@@ -489,6 +491,7 @@ class Order:
             "primary_insurance": self.primary_insurance,
             "order_status": self.order_status.value,
             "billing_selection": self.billing_selection,
+            "place_of_service": self.place_of_service,
             "icd_codes": self.icd_codes,
             "notes": self.notes,
             "item_count": self.item_count,

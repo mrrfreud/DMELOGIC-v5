@@ -220,6 +220,7 @@ class AgentOrderWatcher:
         kwargs["primary_insurance"] = data.get("primary_insurance") or data.get("insurance")
         kwargs["primary_insurance_id"] = data.get("primary_insurance_id") or data.get("insurance_id")
         kwargs["billing_type"] = data.get("billing_type")
+        kwargs["place_of_service"] = data.get("place_of_service") or data.get("placeOfService") or data.get("pos")
 
         # --- Diagnosis ---
         # Accept "icd_codes", "icd10_codes", or "icd_10_codes" (various agent formats)

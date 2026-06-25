@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QCheckBox,
+    QComboBox,
     QToolButton,
     QTableWidget,
     QTableWidgetItem,
@@ -31,6 +32,8 @@ from dmelogic.db.order_workflow import update_order_status_validated
 from dmelogic.db.patients import fetch_patient_by_id
 from dmelogic.db.base import resolve_db_path
 from dmelogic.services.patient_address import get_patient_full_address
+from dmelogic.services.order_pricing import line_pricing_for_order_item
+from dmelogic.place_of_service import place_of_service_code, place_of_service_labels
 from dmelogic.fee_schedule_enhancements import (
     add_pa_type_column_to_epaces,
     add_max_units_column_to_epaces,
@@ -532,6 +535,9 @@ class EpacesHelperDialog(QDialog):
         delivery_row = self._build_delivery_info_row()
         layout.addLayout(delivery_row)
 
+        billing_info_row = self._build_billing_info_row()
+        layout.addLayout(billing_info_row)
+
         # === Bottom buttons ===============================================
         bottom = QHBoxLayout()
         bottom.setSpacing(12)  # Increased button spacing
@@ -863,6 +869,8 @@ class EpacesHelperDialog(QDialog):
 
         billing_conf = self._load_billing_confirmation_number()
         self.billing_confirmation_edit.setText(billing_conf)
+
+        self._select_place_of_service(getattr(o, "place_of_service", None) or self._load_place_of_service())
         
         # Resolve patient address (patients.db first, then order snapshot)
         patient_db_path = resolve_db_path("patients.db", folder_path=self.folder_path)
@@ -1084,6 +1092,7 @@ class EpacesHelperDialog(QDialog):
                 # Single HCPCS - extract base code (first 5 characters)
                 display_hcpcs = full_hcpcs[:5] if len(full_hcpcs) >= 5 else full_hcpcs
             base_hcpcs = display_hcpcs
+            inventory_match = None
             
             # Get item number from order and look up proper formatting in inventory
             item_number = ""
@@ -1098,9 +1107,9 @@ class EpacesHelperDialog(QDialog):
                 # Look up in inventory to get properly formatted version
                 try:
                     from dmelogic.db.inventory import fetch_latest_item_by_hcpcs
-                    inv_data = fetch_latest_item_by_hcpcs(full_hcpcs, folder_path=self.folder_path)
-                    if inv_data and inv_data.get("item_number"):
-                        item_number = inv_data["item_number"]
+                    inventory_match = fetch_latest_item_by_hcpcs(full_hcpcs, folder_path=self.folder_path)
+                    if inventory_match and inventory_match.get("item_number"):
+                        item_number = inventory_match["item_number"]
                     else:
                         # Fallback to raw extracted value
                         item_number = item_number_raw
@@ -1108,20 +1117,14 @@ class EpacesHelperDialog(QDialog):
                     item_number = item_number_raw
 
             qty = str(item.quantity or 0)
-
-            # Amount: prefer total_cost; else cost_ea * qty
-            line_total = Decimal("0.00")
-            if item.total_cost is not None:
-                line_total = item.total_cost
-            elif item.cost_ea is not None:
-                try:
-                    line_total = (item.cost_ea or Decimal("0.00")) * Decimal(
-                        str(item.quantity)
-                    )
-                except Exception:
-                    line_total = Decimal("0.00")
-
-            amount_val = f"{line_total:.2f}" if line_total != Decimal("0.00") else ""
+            pricing = line_pricing_for_order_item(
+                item,
+                folder_path=self.folder_path,
+                hcpcs_candidates=(full_hcpcs, base_hcpcs),
+                item_number=item_number,
+            )
+            line_total = pricing.total
+            amount_val = f"{line_total:.2f}"
 
             claim_total += line_total
 
@@ -1422,6 +1425,29 @@ class EpacesHelperDialog(QDialog):
 
         return row_delivery
 
+    def _build_billing_info_row(self) -> QHBoxLayout:
+        """Build order-level billing fields used during claim entry."""
+        row = QHBoxLayout()
+        row.setSpacing(10)
+
+        self.place_of_service_combo = QComboBox()
+        self.place_of_service_combo.addItems(place_of_service_labels())
+        self.place_of_service_combo.setMinimumHeight(28)
+        self.place_of_service_combo.setMinimumWidth(260)
+        self.place_of_service_combo.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+        row.addWidget(QLabel("Place of Service:"))
+        row.addWidget(self.place_of_service_combo)
+
+        btn_pos_copy = self._make_copy_button(
+            "Copy place of service code",
+            lambda: _copy(self._selected_place_of_service()),
+        )
+        row.addWidget(btn_pos_copy)
+        row.addStretch(1)
+
+        return row
+
     def _ensure_orders_column(self, column_name: str, column_type: str = "TEXT") -> None:
         """Ensure a column exists on orders table (safe no-op if already present)."""
         orders_db = resolve_db_path("orders.db", folder_path=self.folder_path)
@@ -1470,6 +1496,34 @@ class EpacesHelperDialog(QDialog):
             return value if value in ("Primary", "Secondary") else "Primary"
         except Exception:
             return "Primary"
+
+    def _load_place_of_service(self) -> str:
+        """Load order-level place of service for billing, defaulting to Home."""
+        try:
+            self._ensure_orders_column("place_of_service", "TEXT DEFAULT '12'")
+            orders_db = resolve_db_path("orders.db", folder_path=self.folder_path)
+            conn = sqlite3.connect(orders_db)
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COALESCE(place_of_service, '12') FROM orders WHERE id = ?",
+                (self.order.id,),
+            )
+            row = cursor.fetchone()
+            conn.close()
+            return place_of_service_code(row[0] if row and row[0] is not None else "12")
+        except Exception:
+            return "12"
+
+    def _select_place_of_service(self, value: str) -> None:
+        code = place_of_service_code(value)
+        for index in range(self.place_of_service_combo.count()):
+            if place_of_service_code(self.place_of_service_combo.itemText(index)) == code:
+                self.place_of_service_combo.setCurrentIndex(index)
+                return
+        self.place_of_service_combo.setCurrentIndex(0)
+
+    def _selected_place_of_service(self) -> str:
+        return place_of_service_code(self.place_of_service_combo.currentText())
 
     def _selected_billing_payer_id(self) -> str:
         if self._billing_payer_selection == "Secondary":
@@ -1546,11 +1600,13 @@ class EpacesHelperDialog(QDialog):
                 delivery_date = None  # Store as NULL in database
             tracking_number = self.tracking_number_edit.text().strip()
             billing_confirmation_number = self.billing_confirmation_edit.text().strip()
+            place_of_service = self._selected_place_of_service()
             billing_payer_selection = "Secondary" if self.chk_bill_secondary.isChecked() else "Primary"
             billed_payer_name = self._selected_billing_payer_name()
             billed_payer_id = self._selected_billing_payer_id()
 
             self._ensure_orders_column("billing_confirmation_number", "TEXT")
+            self._ensure_orders_column("place_of_service", "TEXT DEFAULT '12'")
             self._ensure_orders_column("billing_payer_selection", "TEXT")
             self._ensure_orders_column("billed_payer_name", "TEXT")
             self._ensure_orders_column("billed_payer_id", "TEXT")
@@ -1564,6 +1620,7 @@ class EpacesHelperDialog(QDialog):
                 SET delivery_date = ?,
                     tracking_number = ?,
                     billing_confirmation_number = ?,
+                    place_of_service = ?,
                     billing_payer_selection = ?,
                     billed_payer_name = ?,
                     billed_payer_id = ?
@@ -1573,6 +1630,7 @@ class EpacesHelperDialog(QDialog):
                     delivery_date,
                     tracking_number,
                     billing_confirmation_number,
+                    place_of_service,
                     billing_payer_selection,
                     billed_payer_name,
                     billed_payer_id,
@@ -1586,6 +1644,7 @@ class EpacesHelperDialog(QDialog):
             self.order.delivery_date = delivery_date
             self.order.tracking_number = tracking_number
             setattr(self.order, "billing_confirmation_number", billing_confirmation_number)
+            setattr(self.order, "place_of_service", place_of_service)
             setattr(self.order, "billing_payer_selection", billing_payer_selection)
             setattr(self.order, "billed_payer_name", billed_payer_name)
             setattr(self.order, "billed_payer_id", billed_payer_id)

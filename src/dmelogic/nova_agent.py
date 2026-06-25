@@ -1358,6 +1358,7 @@ class DMELogicClient:
                 )
 
             billing_type = str(payload.get("billing_type") or BillingType.INSURANCE.value)
+            place_of_service = str(payload.get("place_of_service") or payload.get("placeOfService") or payload.get("pos") or "12").strip()
             requested_status = str(payload.get("order_status") or OrderStatus.PENDING.value)
             on_hold_requested = bool(payload.get("on_hold")) or requested_status == OrderStatus.ON_HOLD.value
             hold_until_date = str(payload.get("hold_until_date") or payload.get("active_date") or "").strip()
@@ -1405,6 +1406,7 @@ class DMELogicClient:
                 order_date=(str(payload.get("order_date") or "").strip() or None),
                 delivery_date=(str(payload.get("delivery_date") or "").strip() or None),
                 billing_type=billing_type,
+                place_of_service=place_of_service,
                 order_status=order_status,
                 primary_insurance=(str(payload.get("primary_insurance") or "").strip() or None),
                 primary_insurance_id=(str(payload.get("primary_insurance_id") or "").strip() or None),
@@ -1440,6 +1442,7 @@ class DMELogicClient:
                 "order_number": f"ORD-{int(new_order_id):03d}",
                 "patient_id": patient_id_value,
                 "order_status": order_status,
+                "place_of_service": place_of_service,
                 "on_hold": on_hold_requested,
                 "hold_until_date": hold_until_date or None,
                 "hold_resume_status": hold_resume_status or None,
@@ -2887,6 +2890,7 @@ TOOLS = [
                  "hold_note": {"type": "string", "description": "Reason or reminder for the hold."},
                  "primary_insurance": {"type": "string"},
                  "primary_insurance_id": {"type": "string"},
+                 "place_of_service": {"type": "string", "description": "2-digit billing place of service code, such as 12 for Home or 31 for Skilled Nursing Facility."},
                  "icd_code_1": {"type": "string"},
                  "doctor_directions": {"type": "string"},
                  "notes": {"type": "string"},

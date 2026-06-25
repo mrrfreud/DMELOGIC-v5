@@ -13,6 +13,8 @@ from decimal import Decimal
 from typing import Optional
 
 from dmelogic.db.models import Order, OrderItem, BillingType
+from dmelogic.place_of_service import place_of_service_code
+from dmelogic.services.order_pricing import line_pricing_for_order_item
 
 
 @dataclass
@@ -389,8 +391,7 @@ def hcfa1500_from_order(order: Order, folder_path: Optional[str] = None) -> Hcfa
         line.date_from = order.order_date
         line.date_to = order.order_date
         
-        # Place of Service: 12 = Home (standard for DME)
-        line.place_of_service = "12"
+        line.place_of_service = place_of_service_code(getattr(order, "place_of_service", None))
         
         # Procedure code (HCPCS)
         line.procedure_code = item.hcpcs_code or ""
@@ -403,7 +404,7 @@ def hcfa1500_from_order(order: Order, folder_path: Optional[str] = None) -> Hcfa
             line.diagnosis_pointer = "A"
         
         # Charges and Units
-        line.charges = item.total_cost or Decimal("0.00")
+        line.charges = line_pricing_for_order_item(item, folder_path=folder_path).total
         line.units = item.quantity or 1
         
         # Rendering provider (prescriber NPI)
