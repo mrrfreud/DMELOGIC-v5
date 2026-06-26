@@ -639,6 +639,7 @@ class Order:
     tracking_number: Optional[str] = None
     is_pickup: bool = False
     billed: bool = False
+    billing_confirmation_number: Optional[str] = None  # Payer Claim Control # from ePACES
     paid: bool = False
 
     # Clinical information

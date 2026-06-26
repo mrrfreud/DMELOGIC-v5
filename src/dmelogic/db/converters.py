@@ -310,6 +310,7 @@ def row_to_order(row: sqlite3.Row) -> Order:
         tracking_number=safe_get(row, "tracking_number"),
         is_pickup=bool(safe_get(row, "is_pickup", 0)),
         billed=bool(safe_get(row, "billed", 0)),
+        billing_confirmation_number=safe_get(row, "billing_confirmation_number"),
         paid=bool(safe_get(row, "paid", 0)),
         paid_date=safe_date(safe_get(row, "paid_date"), "paid_date"),
         hold_until_date=safe_date(safe_get(row, "hold_until_date"), "hold_until_date"),
