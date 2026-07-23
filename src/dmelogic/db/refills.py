@@ -24,6 +24,7 @@ class RefillRow(TypedDict):
     patient_phone: str
     hcpcs_code: str
     description: str
+    quantity: int
     refills_remaining: int
     day_supply: int
     last_filled_date: str
@@ -153,6 +154,7 @@ def fetch_refills_due(
                 o.patient_phone,
                 oi.hcpcs_code,
                 oi.description,
+                CAST(oi.qty AS INTEGER) AS quantity,
                 CAST(oi.refills AS INTEGER) AS refills_remaining,
                 CAST(oi.day_supply AS INTEGER) AS day_supply,
                 oi.last_filled_date,
@@ -188,6 +190,7 @@ def fetch_refills_due(
                         patient_phone=r["patient_phone"] or "",
                         hcpcs_code=r["hcpcs_code"] or "",
                         description=r["description"] or "",
+                        quantity=int(r["quantity"] or 0),
                         refills_remaining=int(r["refills_remaining"] or 0),
                         day_supply=int(r["day_supply"] or 0),
                         last_filled_date=r["last_filled_date"] or "",

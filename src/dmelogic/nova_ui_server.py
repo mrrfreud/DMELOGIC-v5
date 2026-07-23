@@ -37,11 +37,13 @@ try:
 except ImportError:
     pass
 
+from dmelogic import nova_phone
 log = logging.getLogger("nova_ui")
 
 ENV_PATH = Path(_HERE) / ".env"
 NOVA_ICON_PNG = Path(_HERE) / "assets" / "nova_icon.png"
 NOVA_ICON_ICO = Path(_HERE) / "assets" / "Nova Icon.ico"
+WEBPHONE_JS = Path(_HERE) / "static" / "vendor" / "ringcentral-web-phone.min.js"
 
 
 def _env_or_default(name: str, default: str) -> str:
@@ -77,14 +79,17 @@ def _env_int(name: str, default: int) -> int:
 
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "EXAVITQu4vr4xnSDxMaL")
+ELEVENLABS_VOICE_ID_ES = os.getenv("ELEVENLABS_VOICE_ID_ES", "").strip() or ELEVENLABS_VOICE_ID
+ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_turbo_v2").strip() or "eleven_turbo_v2"
+ELEVENLABS_MODEL_ID_ES = os.getenv("ELEVENLABS_MODEL_ID_ES", "eleven_multilingual_v2").strip() or "eleven_multilingual_v2"
 NOVA_VOICE_ENABLED = _env_bool("NOVA_VOICE_ENABLED", default=bool(ELEVENLABS_API_KEY))
 NOVA_AUTO_SUMMARIZE_ON_DISCONNECT = _env_bool("NOVA_AUTO_SUMMARIZE_ON_DISCONNECT", default=False)
 NOVA_AUTOSEND_PENDING_ON_STARTUP = _env_bool("NOVA_AUTOSEND_PENDING_ON_STARTUP", default=False)
 NOVA_AUTO_SONNET_FOR_ATTACHMENTS = _env_bool("NOVA_AUTO_SONNET_FOR_ATTACHMENTS", default=True)
-NOVA_AUTO_SONNET_CHAT_MODEL = os.getenv("NOVA_AUTO_SONNET_CHAT_MODEL", "claude-3-5-sonnet-20241022").strip() or "claude-3-5-sonnet-20241022"
-NOVA_AUTO_SONNET_VISION_MODEL = os.getenv("NOVA_AUTO_SONNET_VISION_MODEL", "claude-3-5-sonnet-20241022").strip() or "claude-3-5-sonnet-20241022"
-NOVA_ECONOMY_CHAT_MODEL = os.getenv("NOVA_ECONOMY_CHAT_MODEL", "claude-3-5-haiku-20241022").strip() or "claude-3-5-haiku-20241022"
-NOVA_ECONOMY_VISION_MODEL = os.getenv("NOVA_ECONOMY_VISION_MODEL", "claude-3-5-haiku-20241022").strip() or "claude-3-5-haiku-20241022"
+NOVA_AUTO_SONNET_CHAT_MODEL = os.getenv("NOVA_AUTO_SONNET_CHAT_MODEL", "claude-sonnet-4-5-20250929").strip() or "claude-sonnet-4-5-20250929"
+NOVA_AUTO_SONNET_VISION_MODEL = os.getenv("NOVA_AUTO_SONNET_VISION_MODEL", "claude-sonnet-4-5-20250929").strip() or "claude-sonnet-4-5-20250929"
+NOVA_ECONOMY_CHAT_MODEL = os.getenv("NOVA_ECONOMY_CHAT_MODEL", "claude-haiku-4-5-20251001").strip() or "claude-haiku-4-5-20251001"
+NOVA_ECONOMY_VISION_MODEL = os.getenv("NOVA_ECONOMY_VISION_MODEL", "claude-haiku-4-5-20251001").strip() or "claude-haiku-4-5-20251001"
 NOVA_MODEL_IDLE_RESET_SECONDS = max(60, _env_int("NOVA_MODEL_IDLE_RESET_SECONDS", 420))
 _eleven_client = None
 EXECUTOR = ThreadPoolExecutor(max_workers=max(4, (os.cpu_count() or 2)))
@@ -108,11 +113,18 @@ async def _send_audio_later(websocket: WebSocket, text: str, context: str = "res
     log.warning(f"Deferred audio send failed: {e}")
 
 
-def _synthesize_elevenlabs_b64(text: str) -> str | None:
-  """Return base64 MP3 audio for text using ElevenLabs, or None if unavailable."""
+def _synthesize_elevenlabs_b64(text: str, force: bool = False, language: str = "en") -> str | None:
+  """Return base64 MP3 audio for text using ElevenLabs, or None if unavailable.
+
+  force=True bypasses the UI voice toggle — used for phone-call audio, which
+  must be synthesized regardless of the chat voice setting.
+
+  language="es" selects the Spanish voice + multilingual model so Spanish is
+  spoken with a natural accent instead of an English-accented one.
+  """
   global _eleven_client
 
-  if not NOVA_VOICE_ENABLED or not ELEVENLABS_API_KEY or not text:
+  if (not NOVA_VOICE_ENABLED and not force) or not ELEVENLABS_API_KEY or not text:
     return None
 
   clean = str(text)
@@ -123,24 +135,39 @@ def _synthesize_elevenlabs_b64(text: str) -> str | None:
   if not clean:
     return None
 
-  try:
-    if _eleven_client is None:
-      from elevenlabs.client import ElevenLabs
-      _eleven_client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+  if str(language).lower().startswith("es"):
+    voice_id = ELEVENLABS_VOICE_ID_ES
+    model_id = ELEVENLABS_MODEL_ID_ES
+  else:
+    voice_id = ELEVENLABS_VOICE_ID
+    model_id = ELEVENLABS_MODEL_ID
 
-    audio_iter = _eleven_client.text_to_speech.convert(
-      text=clean,
-      voice_id=ELEVENLABS_VOICE_ID,
-      model_id="eleven_turbo_v2",
-      output_format="mp3_44100_128",
-    )
-    audio_bytes = b"".join(audio_iter)
-    if not audio_bytes:
-      return None
-    return base64.b64encode(audio_bytes).decode("ascii")
-  except Exception as e:
-    log.warning(f"ElevenLabs synthesis failed: {e}")
-    return None
+  last_err = None
+  for attempt in range(3):
+    try:
+      if _eleven_client is None:
+        from elevenlabs.client import ElevenLabs
+        _eleven_client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+
+      audio_iter = _eleven_client.text_to_speech.convert(
+        text=clean,
+        voice_id=voice_id,
+        model_id=model_id,
+        output_format="mp3_44100_128",
+      )
+      audio_bytes = b"".join(audio_iter)
+      if audio_bytes:
+        return base64.b64encode(audio_bytes).decode("ascii")
+      last_err = "empty audio"
+    except Exception as e:
+      last_err = e
+      log.warning(f"ElevenLabs synthesis failed (attempt {attempt + 1}/3): {e}")
+      # Rebuild the client in case it went stale, then retry.
+      _eleven_client = None
+      time.sleep(0.4)
+  log.error(f"ElevenLabs synthesis gave up after retries: {last_err}")
+  return None
+
 
 app = FastAPI(title="Nova UI")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -815,27 +842,67 @@ def _upsert_env_value(key: str, value: str) -> None:
         log.warning(f"Could not persist {key} to .env: {e}")
 
 
+_ANTHROPIC_MODEL_ALIASES = {
+  "claude-3-5-haiku-latest": "claude-haiku-4-5-20251001",
+  "claude-3-5-haiku-20241022": "claude-haiku-4-5-20251001",
+  "claude-3-5-sonnet-latest": "claude-sonnet-4-5-20250929",
+  "claude-3-5-sonnet-20241022": "claude-sonnet-4-5-20250929",
+  "claude-3-7-sonnet-latest": "claude-sonnet-4-5-20250929",
+  "claude-3-7-sonnet-20250219": "claude-sonnet-4-5-20250929",
+  "claude-sonnet-4-latest": "claude-sonnet-4-5-20250929",
+  "claude-sonnet-4-20250514": "claude-sonnet-4-5-20250929",
+  "claude-opus-4-latest": "claude-opus-4-5-20251101",
+  "claude-opus-4-20250514": "claude-opus-4-5-20251101",
+}
+
+_DEFAULT_MODEL_FALLBACKS = [
+  "claude-haiku-4-5-20251001",
+  "claude-sonnet-4-5-20250929",
+  "claude-opus-4-5-20251101",
+]
+
+
+def _normalize_anthropic_model_name(name: str, *, default: str) -> str:
+  raw = str(name or "").strip()
+  if not raw:
+    return default
+  return _ANTHROPIC_MODEL_ALIASES.get(raw.lower(), raw)
+
+
+def _normalize_anthropic_fallbacks_csv(csv_text: str) -> str:
+  parts = []
+  for token in str(csv_text or "").split(","):
+    normalized = _normalize_anthropic_model_name(token, default="").strip()
+    if normalized and normalized not in parts:
+      parts.append(normalized)
+  for model_name in _DEFAULT_MODEL_FALLBACKS:
+    if model_name not in parts:
+      parts.append(model_name)
+  return ",".join(parts)
+
+
 def _set_anthropic_models(na_module, model: str | None = None, vision_model: str | None = None,
                           fallbacks: str | None = None, persist: bool = True) -> dict:
     """Apply model overrides to current process and optional .env persistence."""
-    if model is not None:
-        val = model.strip()
-        os.environ["CLAUDE_MODEL"] = val
-        na_module.CLAUDE_MODEL = val
-        if persist:
-            _upsert_env_value("CLAUDE_MODEL", val)
-    if vision_model is not None:
-        val = vision_model.strip()
-        os.environ["CLAUDE_VISION_MODEL"] = val
-        na_module.CLAUDE_VISION_MODEL = val
-        if persist:
-            _upsert_env_value("CLAUDE_VISION_MODEL", val)
-    if fallbacks is not None:
-        val = fallbacks.strip()
-        os.environ["CLAUDE_MODEL_FALLBACKS"] = val
-        na_module.CLAUDE_MODEL_FALLBACKS = val
-        if persist:
-            _upsert_env_value("CLAUDE_MODEL_FALLBACKS", val)
+    current_model = model if model is not None else getattr(na_module, "CLAUDE_MODEL", os.getenv("CLAUDE_MODEL", ""))
+    current_vision = vision_model if vision_model is not None else getattr(na_module, "CLAUDE_VISION_MODEL", os.getenv("CLAUDE_VISION_MODEL", ""))
+    current_fallbacks = fallbacks if fallbacks is not None else getattr(na_module, "CLAUDE_MODEL_FALLBACKS", os.getenv("CLAUDE_MODEL_FALLBACKS", ""))
+
+    model_val = _normalize_anthropic_model_name(current_model, default=NOVA_ECONOMY_CHAT_MODEL)
+    vision_val = _normalize_anthropic_model_name(current_vision, default=NOVA_ECONOMY_VISION_MODEL)
+    fallbacks_val = _normalize_anthropic_fallbacks_csv(current_fallbacks)
+
+    os.environ["CLAUDE_MODEL"] = model_val
+    na_module.CLAUDE_MODEL = model_val
+    os.environ["CLAUDE_VISION_MODEL"] = vision_val
+    na_module.CLAUDE_VISION_MODEL = vision_val
+    os.environ["CLAUDE_MODEL_FALLBACKS"] = fallbacks_val
+    na_module.CLAUDE_MODEL_FALLBACKS = fallbacks_val
+
+    if persist:
+      _upsert_env_value("CLAUDE_MODEL", model_val)
+      _upsert_env_value("CLAUDE_VISION_MODEL", vision_val)
+      _upsert_env_value("CLAUDE_MODEL_FALLBACKS", fallbacks_val)
 
     return {
         "model": getattr(na_module, "CLAUDE_MODEL", ""),
@@ -1537,6 +1604,36 @@ HTML = """<!DOCTYPE html>
   /* ── Scrollbar for sidebar ── */
   aside::-webkit-scrollbar { width: 3px; }
   aside::-webkit-scrollbar-thumb { background: var(--border); }
+
+  /* ── 📞 Call card ── */
+  #call-card {
+    display: none;
+    position: fixed;
+    right: 18px;
+    bottom: 84px;
+    width: 320px;
+    background: var(--bg-card, #141a26);
+    border: 1px solid var(--accent);
+    border-radius: 12px;
+    padding: 14px;
+    z-index: 300;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+  }
+  #call-card .cc-title { font-size: 12px; color: var(--accent); letter-spacing: 1px; margin-bottom: 6px; }
+  #call-card .cc-who { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+  #call-card .cc-patient { font-size: 12px; color: var(--text-dim); margin-bottom: 8px; }
+  #call-card .cc-timer { font-family: monospace; font-size: 13px; color: var(--accent2); margin-bottom: 10px; }
+  #call-card .cc-transcript {
+    max-height: 140px; overflow-y: auto; font-size: 12px;
+    border-top: 1px solid var(--border); padding-top: 6px; margin-bottom: 10px;
+  }
+  #call-card .cc-transcript div { margin-bottom: 4px; }
+  #call-card .cc-buttons { display: flex; gap: 8px; }
+  #call-card .cc-buttons button {
+    flex: 1; padding: 8px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg, #0b0f17); color: inherit; cursor: pointer; font-size: 12px;
+  }
+  #call-card .cc-buttons button.danger { border-color: var(--error); color: var(--error); }
 </style>
 </head>
 <body>
@@ -1552,6 +1649,7 @@ HTML = """<!DOCTYPE html>
     <span class="pill" id="model-pill">Haiku</span>
     <button class="pill" id="voice-pill" type="button" onclick="toggleVoice()">🔊 Voice</button>
     <button class="pill" id="wake-pill" type="button" onclick="toggleWakeMode()">👂 Wake Off</button>
+    <button class="pill" id="phone-pill" type="button" onclick="toggleAnswerCalls()" style="opacity:0.6">📞 Answer Calls</button>
     <button class="pill" id="active-listen-pill" type="button" onclick="activateActiveListen()">🎙 Active Listen</button>
     <span class="pill" id="memory-pill">🧠 Memory</span>
     <div class="model-controls">
@@ -1642,6 +1740,22 @@ HTML = """<!DOCTYPE html>
 </main>
 
 <div id="conn-status"></div>
+
+<!-- 📞 Live call card -->
+<div id="call-card">
+  <div class="cc-title">📞 NOVA IS ON A CALL</div>
+  <div class="cc-who" id="call-card-who">Unknown caller</div>
+  <div class="cc-patient" id="call-card-patient"></div>
+  <div class="cc-timer" id="call-card-timer">00:00</div>
+  <div class="cc-transcript" id="call-card-transcript"></div>
+  <div class="cc-buttons">
+    <button type="button" id="call-card-transfer" onclick="phoneTransfer()">👤 Take over</button>
+    <button type="button" class="danger" onclick="phoneHangup()">⏹ Hang up</button>
+  </div>
+</div>
+<audio id="phone-remote-audio" style="display:none"></audio>
+
+<script src="/vendor/ringcentral-web-phone.min.js"></script>
 
 <script>
 const messagesEl = document.getElementById('messages');
@@ -1754,6 +1868,799 @@ function localGreeting() {
   const part = hour < 12 ? 'morning' : (hour < 17 ? 'afternoon' : 'evening');
   return `Good ${part}. Nova online.`;
 }
+
+/* ══════════════ 📞 Answer Calls — Nova softphone (Phase 1) ══════════════ */
+const PHONE_OWNER_KEY = 'novaPhoneOwner';
+const PHONE_OWNER_TTL_MS = 12000;
+let answerCallsEnabled = false;
+let novaWebPhone = null;
+let phoneAudioCtx = null;
+let phoneTtsDest = null;
+let phoneSilentOsc = null;   // keeps the synthetic outbound track continuously live
+let phoneCurrentSession = null;
+let phoneConsultSession = null;
+let phoneCurrentSource = null;
+let phoneCurrentAudioEl = null;
+let phonePlaybackStartedAt = 0;
+let phoneLastSelfHealAt = 0;
+let phoneSenderKeepaliveInt = null;
+let phoneLastSpokenB64 = '';
+let phoneLastRtpHealAt = 0;
+let phoneCallStartedAt = 0;
+let phoneCallTimerInt = null;
+let phoneMaxCallTimer = null;
+let phoneOwnerBeat = null;
+let phoneConfig = { transfer_number: '', max_call_seconds: 600, greeting: '' };
+let phoneDebug = true;  // surface WebRTC media diagnostics into the chat (temporary)
+
+// Step-by-step call tracer: writes to the server's nova_call_debug.log so the
+// whole answer flow can be followed without opening browser DevTools.
+function dbg(step, detail) {
+  try {
+    fetch('/phone/debug-log', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ step: String(step), detail: (detail === undefined ? '' : detail) }),
+      keepalive: true,
+    }).catch(() => {});
+  } catch (_) {}
+}
+const PHONE_CANT_HEAR_RE = /\b(i\s*(can't|cannot|do\s*not|don't)\s*hear\s*(you|anything)?|can't\s*hear\s*you|cannot\s*hear\s*you|no\s*te\s*escucho|no\s*puedo\s*escucharte|no\s*oigo)\b/i;
+
+function setPhonePillState(mode) {
+  const el = document.getElementById('phone-pill');
+  if (!el) return;
+  if (mode === 'on')        { el.textContent = '📞 Answering';    el.classList.add('active');    el.style.opacity = '1'; }
+  else if (mode === 'call') { el.textContent = '📞 On a call';    el.classList.add('active');    el.style.opacity = '1'; }
+  else if (mode === 'err')  { el.textContent = '📞 Phone error';  el.classList.remove('active'); el.style.opacity = '0.6'; }
+  else                      { el.textContent = '📞 Answer Calls'; el.classList.remove('active'); el.style.opacity = '0.6'; }
+}
+
+function claimPhoneOwner() {
+  try { localStorage.setItem(PHONE_OWNER_KEY, JSON.stringify({ id: wakeInstanceId, ts: Date.now() })); } catch (_) {}
+}
+function releasePhoneOwner() {
+  try {
+    const raw = localStorage.getItem(PHONE_OWNER_KEY);
+    const o = raw ? JSON.parse(raw) : null;
+    if (o && o.id === wakeInstanceId) localStorage.removeItem(PHONE_OWNER_KEY);
+  } catch (_) {}
+}
+window.addEventListener('storage', (ev) => {
+  if (ev.key === PHONE_OWNER_KEY && answerCallsEnabled) {
+    try {
+      const o = ev.newValue ? JSON.parse(ev.newValue) : null;
+      if (o && o.id && o.id !== wakeInstanceId) disableAnswerCalls('another Nova window took over');
+    } catch (_) {}
+  }
+});
+
+function ensurePhoneAudio() {
+  if (!phoneAudioCtx) {
+    phoneAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    phoneTtsDest = phoneAudioCtx.createMediaStreamDestination();
+  }
+  if (phoneAudioCtx.state === 'suspended') phoneAudioCtx.resume().catch(() => {});
+}
+
+async function toggleAnswerCalls() {
+  if (answerCallsEnabled) disableAnswerCalls('toggled off');
+  else await enableAnswerCalls();
+}
+
+async function enableAnswerCalls() {
+  const el = document.getElementById('phone-pill');
+  try {
+    ensurePhoneAudio();  // created inside the click gesture
+    if (el) el.textContent = '📞 Connecting…';
+    phoneConfig = await fetch('/phone/config').then(r => r.json()).catch(() => phoneConfig);
+    const res = await fetch('/phone/sip-provision', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      setPhonePillState('err');
+      appendMessage('nova', '📞 Could not enable call answering: ' + (data.detail || data.error || ('HTTP ' + res.status)));
+      return;
+    }
+    claimPhoneOwner();
+    if (phoneOwnerBeat) clearInterval(phoneOwnerBeat);
+    phoneOwnerBeat = setInterval(claimPhoneOwner, 5000);
+
+    novaWebPhone = new WebPhone(data.provision, { appName: 'NovaPhone', appVersion: '1.0', logLevel: 1 });
+    dbg('webphone_created');
+    novaWebPhone.userAgent.on('registered', () => { dbg('sip_registered'); setPhonePillState(phoneCurrentSession ? 'call' : 'on'); });
+    novaWebPhone.userAgent.on('registrationFailed', (e) => {
+      dbg('sip_registration_failed', String((e && e.message) || e || ''));
+      console.error('Softphone registration failed', e);
+      setPhonePillState('err');
+    });
+    novaWebPhone.userAgent.on('invite', (session) => { dbg('sip_invite_received'); phoneOnInvite(session); });
+
+    answerCallsEnabled = true;
+    saveNovaUIState();
+    setPhonePillState('on');
+    fetch('/phone/state', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: true, owner: wakeInstanceId }) }).catch(() => {});
+    appendMessage('nova', '📞 Answer Calls is ON — I will pick up incoming calls to the pharmacy line.');
+  } catch (e) {
+    console.error('enableAnswerCalls failed', e);
+    setPhonePillState('err');
+    appendMessage('nova', '📞 Could not enable call answering: ' + ((e && e.message) || e));
+  }
+}
+
+function disableAnswerCalls(reason) {
+  answerCallsEnabled = false;
+  if (phoneOwnerBeat) { clearInterval(phoneOwnerBeat); phoneOwnerBeat = null; }
+  releasePhoneOwner();
+  try { if (phoneCurrentSession) phoneHangup(); } catch (_) {}
+  try {
+    if (novaWebPhone && novaWebPhone.userAgent) {
+      try { novaWebPhone.userAgent.unregister(); } catch (_) {}
+      try { novaWebPhone.userAgent.stop(); } catch (_) {}
+    }
+  } catch (_) {}
+  novaWebPhone = null;
+  saveNovaUIState();
+  setPhonePillState('off');
+  fetch('/phone/state', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled: false }) }).catch(() => {});
+  if (reason) console.log('Answer Calls disabled:', reason);
+}
+
+function phoneCallerNumber(session) {
+  try {
+    const uri = (session.remoteIdentity && session.remoteIdentity.uri)
+      || (session.request && session.request.from && session.request.from.uri);
+    return (uri && (uri.user || '')) || '';
+  } catch (_) { return ''; }
+}
+function phoneCallerName(session) {
+  try { return (session.remoteIdentity && session.remoteIdentity.displayName) || ''; } catch (_) { return ''; }
+}
+
+async function phoneOnInvite(session) {
+  if (!answerCallsEnabled) { dbg('invite_ignored_answer_off'); return; }
+  if (phoneCurrentSession) { dbg('invite_ignored_already_on_call'); console.log('Already on a call — second call keeps ringing normally.'); return; }
+  phoneCurrentSession = session;
+  const num = phoneCallerNumber(session);
+  const name = phoneCallerName(session);
+  dbg('invite_accepting', { num: num, name: name });
+  try {
+    ensurePhoneAudio();
+    dbg('audio_ctx_state', phoneAudioCtx ? phoneAudioCtx.state : 'none');
+    try { session.on('terminated', () => phoneCleanupCall('caller hung up')); } catch (_) {}
+    try { session.on('failed', () => phoneCleanupCall('call failed')); } catch (_) {}
+    try { session.on('bye', () => phoneCleanupCall('caller hung up')); } catch (_) {}
+    try { session.on('rejected', () => phoneCleanupCall('call rejected')); } catch (_) {}
+    try { session.on('cancel', () => phoneCleanupCall('caller canceled')); } catch (_) {}
+    await phoneAcceptCall(session);
+    dbg('session_accepted');
+    setPhonePillState('call');
+    phoneWireAudio(session);
+    showCallCard(name, num);
+    startCallTimer();
+    appendMessage('nova', '📞 Answered incoming call from ' + (name || 'Unknown') + (num ? ' [' + num + ']' : '') + '.');
+    if (num) {
+      fetch('/phone/match-caller?number=' + encodeURIComponent(num))
+        .then(r => r.json()).then(m => updateCallCardPatient(m)).catch(() => {});
+    }
+    // Phase 2: open the per-call voice loop (greeting arrives over this WS)
+    try {
+      openCallAudioWs(num);
+      dbg('call_audio_ws_opening');
+      startCallVad(session);
+      if (phoneSenderKeepaliveInt) { clearInterval(phoneSenderKeepaliveInt); phoneSenderKeepaliveInt = null; }
+      phoneSenderKeepaliveInt = setInterval(() => {
+        if (!phoneCurrentSession) return;
+        phoneAttachTtsTrack(phoneCurrentSession, 2, 80).catch(() => {});
+      }, 2000);
+    } catch (e) {
+      dbg('call_audio_setup_failed', String((e && e.message) || e || ''));
+      console.error('call-audio setup failed, falling back to greeting only', e);
+      const g = await fetch('/phone/greeting', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      }).then(r => r.json()).catch(() => null);
+      if (g && g.audio_b64) playIntoCall(g.audio_b64);
+    }
+    if (phoneMaxCallTimer) clearTimeout(phoneMaxCallTimer);
+    phoneMaxCallTimer = setTimeout(() => { try { phoneHangup(); } catch (_) {} },
+      Math.max(60, Number(phoneConfig.max_call_seconds || 600)) * 1000);
+  } catch (e) {
+    dbg('invite_failed', String((e && e.message) || e || ''));
+    console.error('phoneOnInvite failed', e);
+    phoneCleanupCall('error answering');
+  }
+}
+
+// Nova answers on a server PC that has no microphone. SIP.js still calls
+// getUserMedia({audio:true}) to build the WebRTC offer; on a mic-less machine
+// that rejects with NotFoundError, so the peerConnection is never created and
+// the caller hears nothing (call falls through to voicemail). Nova never needs
+// a real mic — she speaks via TTS and hears the caller through server-side
+// transcription. So we hand SIP.js Nova's TTS output bus as a synthetic
+// "microphone": negotiation succeeds, the peerConnection is created normally,
+// and whatever Nova plays into the TTS bus is what the caller hears.
+function phoneSyntheticMicStream() {
+  ensurePhoneAudio();
+  let track = phoneTtsDest && phoneTtsDest.stream.getAudioTracks()[0];
+  if (!track || track.readyState === 'ended') {
+    // A previous call closed and stopped the track; rebuild the TTS bus.
+    phoneTtsDest = phoneAudioCtx.createMediaStreamDestination();
+    phoneSilentOsc = null;
+  }
+  if (!phoneSilentOsc) {
+    try {
+      const osc = phoneAudioCtx.createOscillator();
+      const g = phoneAudioCtx.createGain();
+      g.gain.value = 0;                       // inaudible; keeps the track live
+      osc.connect(g); g.connect(phoneTtsDest);
+      osc.start();
+      phoneSilentOsc = osc;
+    } catch (_) {}
+  }
+  return phoneTtsDest.stream;
+}
+
+async function phoneAcceptCall(session) {
+  const md = navigator.mediaDevices;
+  const orig = (md && md.getUserMedia) ? md.getUserMedia.bind(md) : null;
+  const synth = phoneSyntheticMicStream();
+  try {
+    md.getUserMedia = async (constraints) => {
+      if (constraints && constraints.audio) { dbg('gum_synthetic_mic'); return synth; }
+      if (orig) return orig(constraints);
+      throw new DOMException('No media devices', 'NotFoundError');
+    };
+    await session.accept({ sessionDescriptionHandlerOptions: { constraints: { audio: true, video: false } } });
+  } finally {
+    if (orig) md.getUserMedia = orig; else { try { delete md.getUserMedia; } catch (_) {} }
+  }
+}
+
+function phoneGetPeerConnection(session) {
+  try {
+    const sdh = session && session.sessionDescriptionHandler;
+    if (!sdh) return null;
+    return sdh.peerConnection || sdh._peerConnection
+        || (sdh.sessionDescriptionHandler && sdh.sessionDescriptionHandler.peerConnection)
+        || null;
+  } catch (_) { return null; }
+}
+function phoneWireAudio(session, _attempt) {
+  const attempt = _attempt || 0;
+  try {
+    const sdh = session.sessionDescriptionHandler;
+    const pc = phoneGetPeerConnection(session);
+    if (!pc) {
+      // The peerConnection is created asynchronously during SDP negotiation;
+      // wait for it (up to ~4s) instead of giving up, which was the cause of
+      // 'answered but no audio' calls.
+      if (attempt < 40 && phoneCurrentSession === session) {
+        if (attempt === 0) dbg('wire_audio_awaiting_peerconnection');
+        setTimeout(() => phoneWireAudio(session, attempt + 1), 100);
+        return;
+      }
+      dbg('wire_audio_no_peerconnection'); console.error('No peerConnection on session'); return;
+    }
+    if (attempt > 0) dbg('wire_audio_peerconnection_ready', { attempts: attempt });
+    dbg('wire_audio_start', { conn: pc.connectionState || '?', ice: pc.iceConnectionState || '?', sig: pc.signalingState || '?' });
+    // Reliable remote-hangup detection across SIP.js versions: watch the
+    // WebRTC connection state. If the media path drops (caller hung up or the
+    // network died) end the call locally so the call card always clears.
+    const onPcDown = () => {
+      const st = (pc.connectionState || pc.iceConnectionState || '');
+      dbg('pc_state_change', { conn: pc.connectionState || '?', ice: pc.iceConnectionState || '?' });
+      if (st === 'failed' || st === 'closed') {
+        console.log('peerConnection ' + st + ' — cleaning up call.');
+        phoneCleanupCall('caller hung up');
+      } else if (st === 'disconnected') {
+        // Could be a transient ICE blip; confirm after a short grace period.
+        setTimeout(() => {
+          if (!phoneCurrentSession) return;
+          const st2 = (pc.connectionState || pc.iceConnectionState || '');
+          if (st2 === 'disconnected' || st2 === 'failed' || st2 === 'closed') {
+            console.log('peerConnection still ' + st2 + ' — cleaning up call.');
+            phoneCleanupCall('caller hung up');
+          }
+        }, 4000);
+      }
+    };
+    try { pc.addEventListener('connectionstatechange', onPcDown); } catch (_) {}
+    try { pc.addEventListener('iceconnectionstatechange', onPcDown); } catch (_) {}
+    try { pc.addEventListener('icegatheringstatechange', () => dbg('ice_gathering', pc.iceGatheringState || '?')); } catch (_) {}
+    // Outbound: attach Nova's TTS track to the call's audio sender.
+    phoneAttachTtsTrack(session).then((ok) => {
+      if (!ok) console.error('Could not attach TTS outbound track; caller may not hear Nova.');
+      dbg('tts_track_attached', ok);
+    });
+    // Inbound: gather the caller's audio for local monitoring (and P2 VAD).
+    const remoteStream = new MediaStream();
+    pc.getReceivers().forEach(r => { if (r.track && r.track.kind === 'audio') remoteStream.addTrack(r.track); });
+    const monitorEl = document.getElementById('phone-remote-audio');
+    if (monitorEl) { monitorEl.srcObject = remoteStream; monitorEl.volume = 0.4; monitorEl.play().catch(() => {}); }
+    session._novaRemoteStream = remoteStream;
+    // Media snapshots so we can diagnose "caller hears nothing" without DevTools.
+    const mediaSnap = (tag) => {
+      try {
+        const senders = (pc.getSenders && pc.getSenders()) || [];
+        const recvs = (pc.getReceivers && pc.getReceivers()) || [];
+        const sAudio = senders.filter(s => s.track && s.track.kind === 'audio');
+        const rAudio = recvs.filter(r => r.track && r.track.kind === 'audio');
+        dbg('media_snap_' + tag, {
+          conn: pc.connectionState || '?', ice: pc.iceConnectionState || '?',
+          iceGather: pc.iceGatheringState || '?', sig: pc.signalingState || '?',
+          senders_audio: sAudio.length,
+          sender_tracks: sAudio.map(s => s.track ? (s.track.readyState + (s.track.enabled ? '' : '/disabled')) : 'none'),
+          receivers_audio: rAudio.length,
+          receiver_tracks: rAudio.map(r => r.track ? (r.track.readyState + (r.track.muted ? '/muted' : '')) : 'none'),
+          audioCtx: phoneAudioCtx ? phoneAudioCtx.state : 'none',
+        });
+      } catch (e) { dbg('media_snap_failed', String((e && e.message) || e || '')); }
+    };
+    setTimeout(() => mediaSnap('2s'), 2500);
+    setTimeout(() => mediaSnap('8s'), 8000);
+  } catch (e) { dbg('wire_audio_failed', String((e && e.message) || e || '')); console.error('phoneWireAudio failed', e); }
+}
+
+// Attach Nova's persistent TTS track onto the call's outbound audio sender.
+// Safe and idempotent: never destroys the audio context or the TTS stream,
+// only swaps the sender's track (retrying until the sender is ready).
+async function phoneAttachTtsTrack(session, retries = 15, delayMs = 150) {
+  try {
+    if (!session) return false;
+    ensurePhoneAudio();
+    if (phoneAudioCtx && phoneAudioCtx.state === 'suspended') {
+      try { await phoneAudioCtx.resume(); } catch (_) {}
+    }
+    const pc = phoneGetPeerConnection(session);
+    if (!pc) return false;
+
+    const ttsTrack = phoneTtsDest && phoneTtsDest.stream && phoneTtsDest.stream.getAudioTracks()[0];
+    if (!ttsTrack) { console.error('No TTS track available for outbound call audio.'); return false; }
+    ttsTrack.enabled = true;
+
+    const maxRetries = Math.max(1, Number(retries || 1));
+    const waitMs = Math.max(20, Number(delayMs || 120));
+    for (let i = 0; i < maxRetries; i++) {
+      const senders = (pc.getSenders && pc.getSenders()) || [];
+      const sender = senders.find(s => s.track && s.track.kind === 'audio')
+                  || senders.find(s => !s.track)
+                  || senders[0];
+      if (sender) {
+        if (sender.track === ttsTrack) return true;
+        try {
+          await sender.replaceTrack(ttsTrack);
+          return true;
+        } catch (e) {
+          console.error('replaceTrack failed', e);
+        }
+      }
+      if (i < maxRetries - 1) await new Promise(r => setTimeout(r, waitMs));
+    }
+  } catch (e) {
+    console.error('phoneAttachTtsTrack failed', e);
+  }
+  return false;
+}
+
+function playIntoCall(b64, onDone) {
+  const done = () => { if (onDone) onDone(); };
+  try {
+    if (!b64) { done(); return; }
+    ensurePhoneAudio();
+    if (phoneAudioCtx && phoneAudioCtx.state === 'suspended') { phoneAudioCtx.resume().catch(() => {}); }
+    // Make sure our TTS track is on the call sender (idempotent, non-destructive).
+    phoneAttachTtsTrack(phoneCurrentSession, 3, 80).catch(() => {});
+    stopCallPlayback();
+    const bin = atob(b64);
+    const buf = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+
+    phoneAudioCtx.decodeAudioData(buf.buffer.slice(0)).then(audioBuf => {
+      const src = phoneAudioCtx.createBufferSource();
+      src.buffer = audioBuf;
+      src.connect(phoneTtsDest);                       // into the call
+      const g = phoneAudioCtx.createGain();            // quiet local monitor
+      g.gain.value = 0.2;
+      src.connect(g); g.connect(phoneAudioCtx.destination);
+      phoneCurrentSource = src;
+      phonePlaybackStartedAt = Date.now();
+      src._cancelled = false;
+      src.onended = () => {
+        if (phoneCurrentSource === src) phoneCurrentSource = null;
+        if (!src._cancelled) done();                   // skip action if barge-in stopped us
+      };
+      src.start();
+      dbg('tts_playing', { seconds: Math.round((audioBuf.duration || 0) * 10) / 10, ctx: phoneAudioCtx.state });
+    }).catch(e => { dbg('tts_decode_failed', String((e && e.message) || e || '')); console.error('decodeAudioData failed', e); done(); });
+  } catch (e) { dbg('tts_play_failed', String((e && e.message) || e || '')); console.error('playIntoCall failed', e); done(); }
+}
+function stopCallPlayback() {
+  try {
+    if (phoneCurrentSource) {
+      phoneCurrentSource._cancelled = true;
+      phoneCurrentSource.stop();
+      phoneCurrentSource = null;
+    }
+    phonePlaybackStartedAt = 0;
+  } catch (_) {}
+}
+
+function showCallCard(name, num) {
+  const card = document.getElementById('call-card');
+  if (!card) return;
+  document.getElementById('call-card-who').textContent = (name || 'Unknown caller') + (num ? '  ·  ' + num : '');
+  document.getElementById('call-card-patient').textContent = 'Matching caller to patient…';
+  document.getElementById('call-card-transcript').innerHTML = '';
+  document.getElementById('call-card-transfer').style.display = phoneConfig.transfer_number ? '' : 'none';
+  card.style.display = 'block';
+}
+function updateCallCardPatient(m) {
+  const el = document.getElementById('call-card-patient');
+  if (!el) return;
+  const p = (m && (m.patient || (m.matched && m))) || null;
+  if (p) {
+    const nm = p.name || ((p.first_name || '') + ' ' + (p.last_name || '')).trim();
+    el.textContent = '👤 Patient: ' + (nm || 'matched');
+  } else {
+    el.textContent = 'No patient match for this number';
+  }
+}
+function appendCallTranscript(role, text) {
+  const box = document.getElementById('call-card-transcript');
+  if (!box || !text) return;
+  const div = document.createElement('div');
+  div.textContent = (role === 'caller' ? '🗣 ' : '🤖 ') + text;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+function startCallTimer() {
+  phoneCallStartedAt = Date.now();
+  const t = document.getElementById('call-card-timer');
+  if (phoneCallTimerInt) clearInterval(phoneCallTimerInt);
+  phoneCallTimerInt = setInterval(() => {
+    if (!t) return;
+    const s = Math.floor((Date.now() - phoneCallStartedAt) / 1000);
+    t.textContent = String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+  }, 1000);
+}
+
+function phoneHangup() {
+  const s = phoneCurrentSession;
+  if (s) {
+    try { (s.terminate || s.bye || s.dispose || s.reject || s.cancel || function () {}).call(s); }
+    catch (e) { console.error('hangup terminate failed', e); }
+  }
+  // Always tear down the UI/timers even if there is no live SIP session,
+  // so the "Hang up" button reliably dismisses a lingering call card.
+  phoneCleanupCall('hung up');
+}
+async function phoneTransfer() {
+  const s = phoneCurrentSession;
+  if (!s || !phoneConfig.transfer_number) { dbg('transfer_skip', { has_session: !!s, has_number: !!phoneConfig.transfer_number }); return; }
+  if (phoneConsultSession) { dbg('transfer_skip_inprogress'); return; } // transfer already in progress
+  const rawTarget = String(phoneConfig.transfer_number || '');
+  // RingCentral WebPhone outbound invites reject the leading "+" and any
+  // punctuation — dial only the raw digits (e.g. 13476472347).
+  const target = rawTarget.replace(/[^0-9]/g, '');
+  dbg('transfer_start', { raw: rawTarget, dial: target });
+  appendMessage('nova', '📞 Warm transfer: ringing a team member…');
+  // Nova stops talking/listening while the caller is placed on hold.
+  stopCallPlayback();
+  stopCallVad();
+  try { await s.hold(); dbg('transfer_caller_held'); } catch (e) { dbg('transfer_hold_failed', String((e && e.message) || e)); }
+  let consult = null;
+  // This PC has no microphone. The outbound consult INVITE also calls
+  // getUserMedia({audio:true}) to build its WebRTC offer, which throws
+  // NotFoundError and terminates the call in a few milliseconds. Hand the
+  // SDK Nova's TTS bus as a synthetic mic (same trick as answering a call),
+  // and keep it installed until the consult leg is settled.
+  const md = navigator.mediaDevices;
+  const origGum = (md && md.getUserMedia) ? md.getUserMedia.bind(md) : null;
+  const synthMic = phoneSyntheticMicStream();
+  let gumRestored = false;
+  const restoreGum = () => {
+    if (gumRestored) return; gumRestored = true;
+    if (!md) return;
+    if (origGum) md.getUserMedia = origGum; else { try { delete md.getUserMedia; } catch (_) {} }
+  };
+  try {
+    md.getUserMedia = async (constraints) => {
+      if (constraints && constraints.audio) { dbg('gum_synthetic_mic_transfer'); return synthMic; }
+      if (origGum) return origGum(constraints);
+      throw new DOMException('No media devices', 'NotFoundError');
+    };
+  } catch (_) {}
+  // Safety net: never leave getUserMedia overridden indefinitely.
+  const gumSafety = setTimeout(restoreGum, 8000);
+  try {
+    // Place a NEW consultation call to staff FROM Nova's extension so the
+    // team member's phone shows Nova's caller ID ("Nova Transfer").
+    consult = novaWebPhone.userAgent.invite(target, {});
+    phoneConsultSession = consult;
+    dbg('transfer_invite_created');
+  } catch (e) {
+    dbg('transfer_invite_throw', String((e && e.message) || e));
+    console.error('consult invite failed', e);
+    clearTimeout(gumSafety); restoreGum();
+    appendMessage('nova', '📞 Transfer failed — could not reach a team member.');
+    phoneConsultSession = null;
+    try { await s.unhold(); } catch (_) {}
+    // Tell the server so Nova speaks a fallback and takes a message.
+    try {
+      if (phoneCallWs && phoneCallWs.readyState === 1) {
+        phoneCallWs.send(JSON.stringify({ type: 'transfer_failed', turn: phoneTurnCounter, reason: 'invite_error' }));
+      }
+    } catch (_) {}
+    return;
+  }
+  let settled = false;
+  const finish = async () => {
+    if (settled) return; settled = true;
+    clearTimeout(ringTimer);
+    clearTimeout(gumSafety); restoreGum();
+    dbg('transfer_staff_answered');
+    try {
+      await s.warmTransfer(consult);
+      dbg('transfer_bridged');
+      appendMessage('nova', '📞 Transfer complete — caller connected to the team member.');
+      setTimeout(() => phoneCleanupCall('transferred'), 1500);
+    } catch (e) {
+      dbg('transfer_bridge_failed', String((e && e.message) || e));
+      console.error('warm transfer complete failed', e);
+      appendMessage('nova', '📞 Transfer failed — please pick up the desk phone.');
+      phoneConsultSession = null;
+      try { await s.unhold(); } catch (_) {}
+    }
+  };
+  const abort = async (msg, why) => {
+    if (settled) return; settled = true;
+    clearTimeout(ringTimer);
+    clearTimeout(gumSafety); restoreGum();
+    dbg('transfer_abort', { why: why || 'unknown' });
+    try { (consult.terminate || consult.dispose || consult.bye || function(){}).call(consult); } catch (_) {}
+    phoneConsultSession = null;
+    appendMessage('nova', msg || '📞 No team member answered — staying with the caller.');
+    // Bring the caller back and resume Nova's listening loop so she is not
+    // left deaf after a failed transfer.
+    try { await s.unhold(); } catch (_) {}
+    try { phoneAttachTtsTrack(s, 4, 100); } catch (_) {}
+    try { if (!phoneVadState) startCallVad(s); } catch (_) {}
+    // Tell the server the transfer failed so Nova speaks a fallback to the
+    // caller, logs a callback task, and blocks any further transfer retry.
+    try {
+      if (phoneCallWs && phoneCallWs.readyState === 1) {
+        phoneCallWs.send(JSON.stringify({ type: 'transfer_failed', turn: phoneTurnCounter, reason: why || 'no_answer' }));
+      }
+    } catch (_) {}
+  };
+  // Staff answered → bridge the caller to them.
+  try { consult.on('accepted', finish); } catch (_) {}
+  // Ringing indication (helps confirm the outbound leg actually reached RC).
+  try { consult.on('progress', (r) => dbg('transfer_ringing', String((r && r.statusCode) || ''))); } catch (_) {}
+  // Staff phone hung up / rejected before answering → return to caller.
+  try { consult.on('terminated', (r) => abort(null, 'terminated' + (r && r.statusCode ? '_' + r.statusCode : ''))); } catch (_) {}
+  try { consult.on('rejected', (r) => abort(null, 'rejected' + (r && r.statusCode ? '_' + r.statusCode : ''))); } catch (_) {}
+  try { consult.on('failed', (r) => abort(null, 'failed' + (r && r.statusCode ? '_' + r.statusCode : ''))); } catch (_) {}
+  // No answer within 30s → give up and return to caller.
+  const ringTimer = setTimeout(() => abort('📞 No answer — I will take a message instead.', 'ring_timeout_30s'), 30000);
+}
+function phoneCleanupCall(reason) {
+  stopCallPlayback();
+  stopCallVad();
+  if (phoneConsultSession) {
+    try { (phoneConsultSession.terminate || phoneConsultSession.dispose || phoneConsultSession.bye || function(){}).call(phoneConsultSession); } catch (_) {}
+    phoneConsultSession = null;
+  }
+  if (phoneSenderKeepaliveInt) { clearInterval(phoneSenderKeepaliveInt); phoneSenderKeepaliveInt = null; }
+  if (phoneCallWs) {
+    try { phoneCallWs.send(JSON.stringify({ type: 'call_end', reason: reason || 'ended' })); } catch (_) {}
+    try { phoneCallWs.close(); } catch (_) {}
+    phoneCallWs = null;
+  }
+  if (phoneCallTimerInt) { clearInterval(phoneCallTimerInt); phoneCallTimerInt = null; }
+  if (phoneMaxCallTimer) { clearTimeout(phoneMaxCallTimer); phoneMaxCallTimer = null; }
+  const card = document.getElementById('call-card');
+  if (card) card.style.display = 'none';
+  const monitorEl = document.getElementById('phone-remote-audio');
+  if (monitorEl) monitorEl.srcObject = null;
+  if (phoneCurrentSession) {
+    appendMessage('nova', '📞 Call ended (' + (reason || 'done') + ').');
+    phoneCurrentSession = null;
+  }
+  if (answerCallsEnabled) setPhonePillState('on');
+}
+
+/* ── Phase 2: per-call voice loop (WS + VAD) ── */
+let phoneCallWs = null;
+let phoneTurnCounter = 0;
+let phoneVadState = null;
+
+function openCallAudioWs(num) {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  phoneTurnCounter = 0;
+  phoneCallWs = new WebSocket(proto + '://' + location.host + '/call-audio');
+  phoneCallWs.onopen = () => {
+    dbg('call_audio_ws_open');
+    phoneCallWs.send(JSON.stringify({
+      type: 'call_start',
+      call_id: 'call-' + Date.now(),
+      caller_number: num || '',
+    }));
+  };
+  phoneCallWs.onmessage = (ev) => {
+    let data;
+    try { data = JSON.parse(ev.data); } catch (_) { return; }
+    if (data.type === 'greeting') {
+      dbg('greeting_received', { has_audio: !!data.audio_b64, text_len: (data.text || '').length });
+      if (data.text) appendCallTranscript('nova', data.text);
+      if (data.audio_b64) playIntoCall(data.audio_b64);
+    } else if (data.type === 'reply') {
+      if (data.turn && data.turn < phoneTurnCounter) return;  // stale turn after barge-in
+      if (data.user_text) {
+        appendCallTranscript('caller', data.user_text);
+        if (PHONE_CANT_HEAR_RE.test(String(data.user_text))) {
+          phoneAttachTtsTrack(phoneCurrentSession, 6, 120).then((ok) => {
+            if (!ok) console.error('Re-attach failed after caller reported no audio.');
+          });
+        }
+      }
+      if (data.text) appendCallTranscript('nova', data.text);
+      if (!data.action) {
+        playIntoCall(data.audio_b64);
+      } else {
+        let actionFired = false;
+        const fireAction = () => {
+          if (actionFired) return;
+          actionFired = true;
+          phonePostReplyAction(data.action);
+        };
+        const words = String(data.text || '').trim().split(/\s+/).filter(Boolean).length;
+        const actionFallbackMs = Math.min(12000, Math.max(2200, Math.round((words / 2.4) * 1000 + 900)));
+        const timer = setTimeout(fireAction, actionFallbackMs);
+        playIntoCall(data.audio_b64, () => { clearTimeout(timer); fireAction(); });
+      }
+    }
+  };
+  phoneCallWs.onerror = (e) => { dbg('call_audio_ws_error'); console.error('call-audio WS error', e); };
+  phoneCallWs.onclose = () => { dbg('call_audio_ws_closed'); phoneCallWs = null; };
+}
+
+function phonePostReplyAction(action) {
+  if (!action) return;
+  if (action === 'hangup') phoneHangup();
+  else if (action === 'transfer') phoneTransfer();
+}
+
+function startCallVad(session) {
+  const stream = session && session._novaRemoteStream;
+  if (!stream || !phoneAudioCtx) { console.error('VAD: no remote stream/audio ctx'); return; }
+  const srcNode = phoneAudioCtx.createMediaStreamSource(stream);
+  const analyser = phoneAudioCtx.createAnalyser();
+  analyser.fftSize = 2048;
+  srcNode.connect(analyser);
+  const state = phoneVadState = {
+    analyser, srcNode, stream,
+    buf: new Float32Array(analyser.fftSize),
+    recorder: null, chunks: [], recStartAt: 0,
+    speaking: false, speechStartAt: 0, lastVoiceAt: 0,
+    noiseFloor: 0.008, calibrated: false, calibSamples: [], startedAt: Date.now(),
+    interval: null,
+  };
+  state.interval = setInterval(() => vadTick(state), 50);
+}
+
+function vadTick(state) {
+  let rms = 0;
+  try {
+    state.analyser.getFloatTimeDomainData(state.buf);
+    let sum = 0;
+    for (let i = 0; i < state.buf.length; i++) sum += state.buf[i] * state.buf[i];
+    rms = Math.sqrt(sum / state.buf.length);
+  } catch (_) { return; }
+  const now = Date.now();
+
+  if (!state.calibrated) {                 // learn the line's noise floor (first 600ms)
+    state.calibSamples.push(rms);
+    if (now - state.startedAt >= 600) {
+      const avg = state.calibSamples.reduce((a, b) => a + b, 0) / Math.max(1, state.calibSamples.length);
+      state.noiseFloor = Math.max(0.006, avg * 3.0);
+      state.calibrated = true;
+    }
+    return;
+  }
+
+  const voiced = rms > state.noiseFloor;
+  if (voiced) state.lastVoiceAt = now;
+
+  if (!state.speaking) {
+    if (voiced) {
+      if (!state.speechStartAt) state.speechStartAt = now;
+      if (now - state.speechStartAt >= 200) {   // sustained speech → start of utterance
+        state.speaking = true;
+        onCallerSpeechStart(state);
+      }
+    } else {
+      state.speechStartAt = 0;
+    }
+  } else if (!voiced && (now - state.lastVoiceAt) >= 1200) {  // 1.2s silence → end (let caller finish)
+    state.speaking = false;
+    state.speechStartAt = 0;
+    onCallerSpeechEnd(state);
+  }
+}
+
+function onCallerSpeechStart(state) {
+  const now = Date.now();
+  const isNovaPlaying = !!phoneCurrentSource;
+  const playbackAgeMs = phonePlaybackStartedAt ? (now - phonePlaybackStartedAt) : 0;
+  // Avoid cancelling Nova instantly on line noise; only allow barge-in
+  // once Nova has been audible long enough to be heard.
+  if (isNovaPlaying && playbackAgeMs >= 2500) {
+    stopCallPlayback();
+  }
+  try {
+    state.chunks = [];
+    state.recorder = new MediaRecorder(state.stream, { mimeType: 'audio/webm;codecs=opus' });
+    state.recorder.ondataavailable = (e) => { if (e.data && e.data.size) state.chunks.push(e.data); };
+    state.recStartAt = Date.now();
+    state.recorder.start();
+  } catch (e) { console.error('MediaRecorder failed', e); state.recorder = null; }
+}
+
+function onCallerSpeechEnd(state) {
+  const rec = state.recorder;
+  if (!rec) return;
+  state.recorder = null;
+  const durMs = Date.now() - (state.recStartAt || 0);
+  rec.onstop = () => {
+    const chunks = state.chunks;
+    state.chunks = [];
+    if (durMs < 500 || !chunks.length) return;   // too short to be speech
+    phoneTurnCounter++; // only advance turns for real utterances we actually send
+    const myTurn = phoneTurnCounter;
+    const blob = new Blob(chunks, { type: 'audio/webm' });
+    const fr = new FileReader();
+    fr.onloadend = () => {
+      const s = String(fr.result || '');
+      const b64 = s.slice(s.indexOf(',') + 1);
+      if (b64 && phoneCallWs && phoneCallWs.readyState === WebSocket.OPEN) {
+        phoneCallWs.send(JSON.stringify({
+          type: 'utterance', turn: myTurn, audio_b64: b64, mime: 'audio/webm',
+        }));
+      }
+    };
+    fr.readAsDataURL(blob);
+  };
+  try { rec.stop(); } catch (_) {}
+}
+
+function stopCallVad() {
+  const s = phoneVadState;
+  if (!s) return;
+  if (s.interval) clearInterval(s.interval);
+  try { if (s.recorder) s.recorder.stop(); } catch (_) {}
+  try { s.srcNode.disconnect(); } catch (_) {}
+  phoneVadState = null;
+}
+
+// Restore the toggle after a reload; unregister cleanly when the window closes.
+window.addEventListener('load', () => {
+  try {
+    const raw = localStorage.getItem(NOVA_UI_STATE_KEY);
+    const st = raw ? JSON.parse(raw) : null;
+    if (st && st.answerCalls) setTimeout(() => { enableAnswerCalls(); }, 1200);
+  } catch (_) {}
+});
+window.addEventListener('beforeunload', () => {
+  if (answerCallsEnabled) {
+    try {
+      navigator.sendBeacon('/phone/state',
+        new Blob([JSON.stringify({ enabled: false })], { type: 'application/json' }));
+    } catch (_) {}
+    releasePhoneOwner();
+  }
+});
+/* ══════════════ end 📞 Answer Calls ══════════════ */
 
 function setVoicePillState() {
   voicePill.textContent = voiceEnabled ? '🔊 Voice' : '🔇 Voice Off';
@@ -3573,7 +4480,13 @@ async def get_pending_message():
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    return HTML
+    # No-store so browsers never reuse stale softphone JS across restarts
+    # (a cached old build caused 'answered but no audio' on port 8401).
+    return HTMLResponse(content=HTML, headers={
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    })
 
 @app.get("/favicon.ico")
 async def favicon_ico():
@@ -3591,15 +4504,506 @@ async def nova_icon_png():
     return FileResponse(str(NOVA_ICON_ICO), media_type="image/x-icon")
   return HTMLResponse(status_code=404, content="")
 
+@app.get("/vendor/ringcentral-web-phone.min.js")
+async def vendor_webphone_js():
+  if WEBPHONE_JS.exists():
+    return FileResponse(str(WEBPHONE_JS), media_type="application/javascript")
+  return HTMLResponse(status_code=404, content="")
+
+@app.get("/phone/config")
+async def phone_config():
+  return nova_phone.get_config()
+
+@app.post("/phone/sip-provision")
+async def phone_sip_provision():
+  loop = asyncio.get_event_loop()
+  result = await loop.run_in_executor(EXECUTOR, nova_phone.sip_provision)
+  if result.get("ok"):
+    return result
+  return JSONResponse(status_code=int(result.get("status", 500)), content=result)
+
+@app.post("/phone/state")
+async def phone_state(request: Request):
+  try:
+    body = await request.json()
+  except Exception:
+    body = {}
+  state = nova_phone.set_answer_state(bool(body.get("enabled")), str(body.get("owner", "")))
+  log.info(f"Phone answer-calls state: {state}")
+  return state
+
+@app.post("/phone/debug-log")
+async def phone_debug_log(request: Request):
+  """Client posts step-by-step call events here; appended to nova_call_debug.log
+  so the answer flow can be traced end-to-end without browser DevTools."""
+  try:
+    body = await request.json()
+  except Exception:
+    body = {}
+  step = str(body.get("step") or "").strip()
+  detail = body.get("detail")
+  try:
+    line = f"{datetime.now().strftime('%H:%M:%S.%f')[:-3]}  CLIENT  {step}"
+    if detail not in (None, ""):
+      line += f"  | {detail if isinstance(detail, str) else json.dumps(detail)[:800]}"
+    with open(os.path.join(_HERE, "nova_call_debug.log"), "a", encoding="utf-8") as fh:
+      fh.write(line + "\n")
+  except Exception as e:
+    log.error(f"phone_debug_log write failed: {e}")
+  return {"ok": True}
+
+@app.get("/phone/match-caller")
+async def phone_match_caller(number: str = ""):
+  import dmelogic.nova_ringcentral as rc_tools
+  loop = asyncio.get_event_loop()
+  try:
+    result = await loop.run_in_executor(
+      EXECUTOR, lambda: rc_tools.match_caller_to_patient(number))
+    return result if isinstance(result, dict) else {"matched": False}
+  except Exception as e:
+    log.error(f"phone_match_caller failed: {e}")
+    return {"matched": False, "error": str(e)[:200]}
+
+@app.post("/phone/greeting")
+async def phone_greeting(request: Request):
+  """Synthesize the call greeting; returns {text, audio_b64}."""
+  try:
+    body = await request.json()
+  except Exception:
+    body = {}
+  text = str(body.get("text") or "").strip() or nova_phone.DEFAULT_GREETING
+  loop = asyncio.get_event_loop()
+  # Bilingual greeting → multilingual model so Spanish isn't English-accented.
+  audio_b64 = await loop.run_in_executor(
+    EXECUTOR, lambda: _synthesize_elevenlabs_b64(text, force=True, language="es"))
+  return {"text": text, "audio_b64": audio_b64}
+
+
+_TRANSFER_KEYWORD_RE = re.compile(
+  r"\b(representative|human|operator|pharmacist|real person|speak to (a|some)one|talk to (a|some)one|representante|humano|operador|farmaceutico|persona real|hablar con alguien)\b",
+  re.IGNORECASE)
+_REFILL_REQUEST_RE = re.compile(
+  r"\b(refill|re[- ]?fill|renew|renewal|order\s+(a\s+)?refill|need\s+(a\s+)?refill|resurtido|relleno|renovar|renovacion|ordenar\s+resurtido|necesito\s+resurtido)\b",
+  re.IGNORECASE)
+_VERIFY_FAIL_RE = re.compile(r"\b(not able to verify|can't verify|cannot verify|no puedo verificar|no se puede verificar)\b", re.IGNORECASE)
+_FOLLOWUP_OFFER_RE = re.compile(
+  r"\b(message|call\s?back|callback|transfer|team member|representative|pharmacist|mensaje|devolver\s+la\s+llamada|transferir|miembro\s+del\s+equipo|representante|farmaceutico)\b",
+  re.IGNORECASE)
+_LANGUAGE_SPANISH_RE = re.compile(
+  r"\b(spanish|espanol|espanol por favor|en espanol|habla espanol|prefiero espanol|quiero espanol)\b",
+  re.IGNORECASE)
+_LANGUAGE_ENGLISH_RE = re.compile(
+  r"\b(english|in english|en ingles|prefiero ingles|quiero ingles)\b",
+  re.IGNORECASE)
+_SPANISH_HINT_RE = re.compile(
+  r"\b(hola|gracias|por favor|buenas|necesito|quiero|mensaje|equipo|farmacia|fecha de nacimiento|llamada|resurtido|relleno)\b",
+  re.IGNORECASE)
+_VERIFY_FAIL_SAFE_REPLY_EN = (
+  "I'm not able to verify that information. "
+  "I can take a callback message for staff, or transfer you to a team member."
+)
+_VERIFY_FAIL_SAFE_REPLY_ES = (
+  "No puedo verificar esa informacion. "
+  "Puedo tomar un mensaje para que el personal le devuelva la llamada, "
+  "o transferirle con un miembro del equipo."
+)
+_TRANSFER_UNAVAILABLE_REPLY_EN = (
+  "I'm sorry, no one is available to take your call right now. "
+  "I've made a note for our team and someone will call you back shortly. "
+  "Is there anything else I can help you with in the meantime?"
+)
+_TRANSFER_UNAVAILABLE_REPLY_ES = (
+  "Lo siento, en este momento no hay nadie disponible para atender su llamada. "
+  "He dejado una nota para nuestro equipo y alguien le devolvera la llamada muy pronto. "
+  "Mientras tanto, hay algo mas en lo que le pueda ayudar?"
+)
+
+
+@app.websocket("/call-audio")
+async def call_audio_endpoint(websocket: WebSocket):
+  """Per-call voice loop: utterance audio in → transcript + Nova reply audio out."""
+  await websocket.accept()
+  agent = None
+  call_id = ""
+  caller_number = ""
+  turn_busy = False
+  caller_requested_refill = False
+  verification_failed = False
+  followup_offered = False
+  transfer_attempted = False
+  transfer_unavailable = False
+  language_mode = "en"
+  patient_match = None
+  loop = asyncio.get_event_loop()
+
+  def _dbg(step: str, detail: str = ""):
+    try:
+      line = f"{datetime.now().strftime('%H:%M:%S.%f')[:-3]}  SERVER  {step}"
+      if detail:
+        line += f"  | {detail}"
+      with open(os.path.join(_HERE, "nova_call_debug.log"), "a", encoding="utf-8") as fh:
+        fh.write(line + "\n")
+    except Exception:
+      pass
+
+  _dbg("call_audio_ws_accepted")
+
+  async def _tts(text: str):
+    lang = language_mode
+    return await loop.run_in_executor(
+      EXECUTOR, lambda: _synthesize_elevenlabs_b64(text, force=True, language=lang))
+
+  def _record_transfer_fallback_task():
+    """Log a callback task when a live transfer could not be completed."""
+    if agent is None:
+      return None
+    try:
+      token = f"[Transfer unanswered {call_id}]"
+      existing = agent.memory.get_reminders(tag="callback", status="active")
+      for r in existing[-30:]:
+        if token in str(r.get("content") or ""):
+          return None
+      content = (
+        f"{token} Caller from {caller_number or 'unknown number'} asked for a "
+        f"live person but no one answered the warm transfer. Please call them "
+        f"back. (Nova took a message instead of retrying the transfer.)"
+      )
+      return agent.memory.add_reminder(content=content, tag="callback")
+    except Exception as e:
+      log.warning(f"transfer fallback task failed: {e}")
+      return None
+
+  def _record_refill_followup():
+    """Deterministically create a staff follow-up when a caller requested a
+    refill, so it never depends on the model remembering to call tools.
+
+    Creates three things: a 'Must Go Out' queue entry (visible on the DMELogic
+    Must Go Out tab), a repeating reminder due NOW (so the alert actively fires
+    until staff mark it done), and a patient tracking note when we have a
+    verified patient id."""
+    if agent is None:
+      return None
+    try:
+      # Resolve patient name / id / phone from the caller match (if any).
+      p = {}
+      if isinstance(patient_match, dict):
+        p = patient_match.get("patient") or patient_match
+      pid = p.get("id") or p.get("patient_id")
+      name = str(
+        p.get("name") or f"{p.get('first_name', '')} {p.get('last_name', '')}"
+      ).strip()
+      phone = caller_number or str(p.get("phone") or "").strip()
+      display_name = name or "Unknown caller"
+
+      # Dedup: skip if we already logged a follow-up for this call.
+      token = f"[Refill call {call_id}]"
+      try:
+        existing = agent.memory.get_reminders(tag="refill_callback", status="active")
+        for r in (existing or [])[-40:]:
+          if token in str(r.get("content") or ""):
+            return None
+      except Exception:
+        pass
+
+      note = (
+        f"Refill request via Nova phone call from {phone or 'unknown number'}. "
+        "Verify the order's current delivery/pickup status on the Orders tab "
+        "and follow up with the patient to confirm."
+      )
+
+      # 1) Must Go Out queue entry (staff physically see this on the tab).
+      try:
+        agent.dme.add_must_go_out(
+          patient_name=display_name,
+          patient_phone=phone,
+          notes=note,
+        )
+      except Exception as e:
+        log.warning(f"refill must-go-out entry failed: {e}")
+
+      # 2) Repeating reminder due NOW so it actively alerts.
+      rid = None
+      try:
+        rid = agent.memory.add_reminder(
+          content=(
+            f"{token} {display_name} ({phone or 'no number'}) requested a refill. "
+            "Verify status and call the patient back to confirm."
+          ),
+          tag="refill_callback",
+          due_at=datetime.now().isoformat(),
+          remind_every_minutes=30,
+        )
+      except Exception as e:
+        log.warning(f"refill reminder failed: {e}")
+
+      # 3) Patient tracking note (only when we have a verified patient id).
+      if pid:
+        try:
+          agent.dme.create_patient_tracking_note(
+            int(pid),
+            "other",
+            note,
+            created_by="Nova",
+          )
+        except Exception as e:
+          log.warning(f"refill tracking note failed: {e}")
+
+      return rid
+    except Exception as e:
+      log.warning(f"refill follow-up task failed: {e}")
+      return None
+
+  try:
+    while True:
+      data = await websocket.receive_json()
+      mtype = data.get("type")
+
+      if mtype == "call_start":
+        call_id = str(data.get("call_id") or f"call-{int(datetime.now().timestamp())}")
+        caller_number = str(data.get("caller_number") or "")
+        _dbg("call_start_received", f"call_id={call_id} caller={caller_number}")
+
+        def _make_agent():
+          import dmelogic.nova_ringcentral as rc_tools
+          from dmelogic.nova_agent import PhoneAgent
+          match = None
+          try:
+            if caller_number:
+              match = rc_tools.match_caller_to_patient(caller_number)
+          except Exception:
+            match = None
+          return match, PhoneAgent(caller_number=caller_number, patient_match=match)
+
+        patient_match, agent = await loop.run_in_executor(EXECUTOR, _make_agent)
+        _dbg("agent_created")
+        greeting_text = nova_phone.DEFAULT_GREETING
+        # The greeting is bilingual, so synthesize it with the multilingual
+        # model so the Spanish half doesn't come out English-accented.
+        audio_b64 = await loop.run_in_executor(
+          EXECUTOR, lambda: _synthesize_elevenlabs_b64(greeting_text, force=True, language="es"))
+        _dbg("greeting_synth_done", f"audio_bytes_b64={len(audio_b64 or '')}")
+        await websocket.send_json(
+          {"type": "greeting", "text": greeting_text, "audio_b64": audio_b64})
+        _dbg("greeting_sent_to_client")
+        await _broadcast_json({
+          "type": "call_transcript", "call_id": call_id, "role": "system",
+          "text": f"📞 Nova answered a call from {caller_number or 'an unknown number'}.",
+        })
+
+      elif mtype == "utterance":
+        if agent is None or turn_busy:
+          continue  # no call context yet, or Nova is mid-turn — drop overlap
+        turn_busy = True
+        try:
+          turn = int(data.get("turn") or 0)
+          try:
+            audio_bytes = base64.b64decode(data.get("audio_b64") or "")
+          except Exception:
+            audio_bytes = b""
+
+          transcript = await loop.run_in_executor(
+            EXECUTOR, lambda: nova_phone.transcribe_utterance(audio_bytes, language=language_mode))
+          _dbg("utterance_transcribed", f"turn={turn} bytes={len(audio_bytes)} text={(transcript or '')[:80]!r}")
+
+          if not transcript:
+            text = ("Perdon, no le escuche bien. Puede repetirlo, por favor?"
+                    if language_mode == "es"
+                    else "Sorry, I didn't catch that. Could you repeat it for me?")
+            await websocket.send_json({
+              "type": "reply", "turn": turn, "user_text": "",
+              "text": text, "audio_b64": await _tts(text), "action": None})
+            continue
+
+          await _broadcast_json({
+            "type": "call_transcript", "call_id": call_id,
+            "role": "caller", "text": transcript})
+
+          if _REFILL_REQUEST_RE.search(transcript):
+            caller_requested_refill = True
+
+          if _LANGUAGE_ENGLISH_RE.search(transcript):
+            language_mode = "en"
+          elif _LANGUAGE_SPANISH_RE.search(transcript) or _SPANISH_HINT_RE.search(transcript):
+            language_mode = "es"
+
+          reply = await loop.run_in_executor(EXECUTOR, agent.chat, transcript)
+          clean = (reply or "").strip()
+          action = None
+          if "<<TRANSFER>>" in clean:
+            action = "transfer"
+            clean = clean.replace("<<TRANSFER>>", "").strip()
+          if "<<HANGUP>>" in clean:
+            action = action or "hangup"
+            clean = clean.replace("<<HANGUP>>", "").strip()
+          # Safety net: transfer on explicit keywords even if the model
+          # forgot the marker (only when a transfer number is configured).
+          if not action and nova_phone.TRANSFER_NUMBER and _TRANSFER_KEYWORD_RE.search(transcript):
+            action = "transfer"
+            if "transfer" not in clean.lower() and "transferir" not in clean.lower():
+              transfer_line = " Let me transfer you to a team member now."
+              if language_mode == "es":
+                transfer_line = " Le voy a transferir con un miembro del equipo ahora."
+              clean = (clean + transfer_line).strip()
+
+          # Loop guard: only ONE live transfer attempt per call. If a transfer
+          # was already attempted (or already failed, or no number configured),
+          # do NOT dial again — fall back to taking a message so the caller is
+          # never bounced or double-dialed. Checking transfer_attempted (not
+          # just transfer_unavailable) closes the race where the model emits a
+          # second transfer on the next turn before the first failure is
+          # reported back over the websocket.
+          if action == "transfer" and (
+              transfer_attempted or transfer_unavailable or not nova_phone.TRANSFER_NUMBER):
+            action = None
+            clean = (_TRANSFER_UNAVAILABLE_REPLY_ES if language_mode == "es"
+                     else _TRANSFER_UNAVAILABLE_REPLY_EN)
+            followup_offered = True
+            await loop.run_in_executor(EXECUTOR, _record_transfer_fallback_task)
+          elif action == "transfer":
+            transfer_attempted = True
+
+          if _VERIFY_FAIL_RE.search(clean):
+            verification_failed = True
+            clean = _VERIFY_FAIL_SAFE_REPLY_ES if language_mode == "es" else _VERIFY_FAIL_SAFE_REPLY_EN
+            followup_offered = True
+          if action == "transfer" or _FOLLOWUP_OFFER_RE.search(clean):
+            followup_offered = True
+
+          if not clean:
+            clean = "Un momento, por favor." if language_mode == "es" else "One moment please."
+
+          _dbg("nova_reply", f"turn={turn} action={action or 'none'} text={clean[:200]!r}")
+          await _broadcast_json({
+            "type": "call_transcript", "call_id": call_id,
+            "role": "nova", "text": clean})
+          await websocket.send_json({
+            "type": "reply", "turn": turn, "user_text": transcript,
+            "text": clean, "audio_b64": await _tts(clean), "action": action})
+        finally:
+          turn_busy = False
+
+      elif mtype == "transfer_failed":
+        # The browser softphone reports that a warm transfer could not be
+        # completed (no answer / rejected). Nova stays on the line, tells the
+        # caller, logs a callback task, and blocks any further transfer retry.
+        transfer_unavailable = True
+        followup_offered = True
+        _dbg("transfer_failed", f"reason={str(data.get('reason') or 'no_answer')} -> message taken")
+        await loop.run_in_executor(EXECUTOR, _record_transfer_fallback_task)
+        fb = (_TRANSFER_UNAVAILABLE_REPLY_ES if language_mode == "es"
+              else _TRANSFER_UNAVAILABLE_REPLY_EN)
+        turn_busy = False
+        await _broadcast_json({
+          "type": "call_transcript", "call_id": call_id, "role": "nova", "text": fb})
+        await websocket.send_json({
+          "type": "reply", "turn": int(data.get("turn") or 0),
+          "user_text": "", "text": fb, "audio_b64": await _tts(fb), "action": None})
+
+      elif mtype == "call_end":
+        reason = str(data.get("reason") or "ended")
+        if agent is not None:
+          auto_followup_id = None
+          reason_l = reason.lower()
+
+          # Deterministic refill follow-up: whenever the caller asked for a
+          # refill, guarantee a Must Go Out entry + repeating reminder + note,
+          # regardless of whether the model called the tools mid-call.
+          refill_followup_id = None
+          if caller_requested_refill:
+            refill_followup_id = await loop.run_in_executor(
+              EXECUTOR, _record_refill_followup)
+            if refill_followup_id:
+              try:
+                fresh = await loop.run_in_executor(
+                  EXECUTOR, lambda: agent.memory.get_reminders(status="active"))
+                await _broadcast_json({
+                  "type": "reminders_updated",
+                  "reminders": fresh or [],
+                  "text": "New refill callback added to reminders.",
+                })
+              except Exception:
+                pass
+
+          needs_auto_followup = (
+            caller_requested_refill
+            and verification_failed
+            and ("hung up" in reason_l or "disconnect" in reason_l or not followup_offered)
+          )
+
+          if needs_auto_followup:
+            def _auto_record_unverified_followup():
+              try:
+                token = f"[Auto call {call_id}]"
+                existing = agent.memory.get_reminders(tag="follow_up", status="active")
+                for r in existing[-30:]:
+                  content = str(r.get("content") or "")
+                  if token in content:
+                    return None
+
+                content = (
+                  f"{token} Unverified caller from {caller_number or 'unknown number'} "
+                  f"requested a refill, verification failed, and the call ended ({reason}). "
+                  "Call back to complete identity verification and refill intake."
+                )
+                return agent.memory.add_reminder(content, tag="follow_up")
+              except Exception as e:
+                log.error(f"auto follow-up reminder failed: {e}")
+                return None
+
+            auto_followup_id = await loop.run_in_executor(EXECUTOR, _auto_record_unverified_followup)
+
+          def _summarize():
+            try:
+              facts = []
+              if caller_requested_refill:
+                facts.append("Caller requested a refill.")
+              if verification_failed:
+                facts.append("Identity verification failed.")
+              if followup_offered:
+                facts.append("Message/transfer options were offered.")
+              if auto_followup_id:
+                facts.append(f"Automatic follow-up reminder #{auto_followup_id} was recorded.")
+              extra = " ".join(facts).strip()
+
+              prompt = (
+                "The call has ended. For the pharmacy staff chat log, summarize in one or "
+                "two plain sentences who called and what they needed, including any "
+                "follow-up you recorded. Do not use call control markers."
+              )
+              if extra:
+                prompt = f"{prompt} Additional call facts: {extra}"
+
+              out = agent.chat(
+                prompt)
+              return (out or "").replace("<<TRANSFER>>", "").replace("<<HANGUP>>", "").strip()
+            except Exception:
+              return ""
+          summary = await loop.run_in_executor(EXECUTOR, _summarize)
+          _dbg("call_end", f"reason={reason} auto_followup={auto_followup_id or 'none'} summary={ (summary or '')[:200]!r}")
+          if summary:
+            await _broadcast_json({
+              "type": "call_summary", "call_id": call_id,
+              "text": f"📞 Call summary ({reason}): {summary}"})
+          agent = None
+
+  except WebSocketDisconnect:
+    _dbg("call_audio_ws_disconnected", f"call_id={call_id or 'n/a'}")
+    log.info(f"/call-audio disconnected (call {call_id or 'n/a'})")
+  except Exception as e:
+    _dbg("call_audio_ws_error", str(e)[:200])
+    log.error(f"/call-audio error: {e}")
+
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     _active_websockets.append(websocket)
     log.info("WebSocket client connected")
 
-    # Ensure first UI state reflects economy defaults before any startup payload.
+    # Normalize and heal any stale/unsupported model IDs before first startup payload.
     import dmelogic.nova_agent as na
-    _set_anthropic_models(na, vision_model=NOVA_ECONOMY_VISION_MODEL, persist=False)
+    _set_anthropic_models(na, persist=True)
 
     # Send greeting immediately so UI doesn't hang
     hour = datetime.now().hour

@@ -73,6 +73,7 @@ from dmelogic.refill_service import process_refill, RefillError
 from dmelogic.ui.components.sticky_notes_panel import StickyNotesPanel
 from dmelogic.ui.reorder_dialog import ReorderConfirmationDialog
 from dmelogic.ui.dictation import enable_dictation
+from dmelogic.services.order_pricing import line_pricing_for_order_item
 from dmelogic.reserved_rx_manager import ReservedRxPanel, handle_last_refill, get_reserved_rx_data
 
 
@@ -410,7 +411,19 @@ class OrderEditorDialog(QDialog):
         
         self.billing_type = QLabel()
         form_layout.addRow("Billing Type:", self.billing_type)
-        
+
+        # Place of Service — editable; required on the claim (11 Office / 12 Home).
+        from dmelogic.place_of_service import place_of_service_labels
+        self.place_of_service_combo = QComboBox()
+        self.place_of_service_combo.addItems(place_of_service_labels())
+        self.place_of_service_combo.setToolTip(
+            "Billing Place of Service for the claim: 11 = Office, 12 = Home.\n"
+            "Saved immediately when changed; shown in the ePACES helper for billing."
+        )
+        self._pos_loading = False
+        self.place_of_service_combo.currentIndexChanged.connect(self._on_place_of_service_changed)
+        form_layout.addRow("Place of Service:", self.place_of_service_combo)
+
         layout.addLayout(form_layout)
         
         # Change insurance button
@@ -484,9 +497,9 @@ class OrderEditorDialog(QDialog):
         layout = QVBoxLayout(group)
         
         self.items_table = QTableWidget()
-        self.items_table.setColumnCount(9)
+        self.items_table.setColumnCount(10)
         self.items_table.setHorizontalHeaderLabels([
-            "HCPCS", "Item #", "Description", "Qty", "Refills", "Days", "Modifiers", "Cost", "Prescriber"
+            "HCPCS", "Item #", "Description", "Qty", "Refills", "Days", "Modifiers", "Bill Ea", "Amount", "Prescriber"
         ])
         
         # Set column widths
@@ -500,6 +513,7 @@ class OrderEditorDialog(QDialog):
         header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(7, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(8, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(9, QHeaderView.ResizeMode.ResizeToContents)
         
         self.items_table.setAlternatingRowColors(True)
         self.items_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -765,6 +779,44 @@ class OrderEditorDialog(QDialog):
         
         return panel
     
+    def _on_place_of_service_changed(self, _index: int) -> None:
+        """Persist the Place of Service immediately when the user changes it."""
+        if getattr(self, "_pos_loading", False) or not self.order:
+            return
+        try:
+            from dmelogic.place_of_service import place_of_service_code
+            from dmelogic.db.orders import update_order_fields
+            code = place_of_service_code(self.place_of_service_combo.currentText())
+            update_order_fields(self.order.id, {"place_of_service": code}, folder_path=self.folder_path)
+            setattr(self.order, "place_of_service", code)
+            debug_log(f"Order {self._format_order_number()}: place_of_service -> {code}")
+        except Exception as e:
+            QMessageBox.warning(self, "Place of Service", f"Could not save Place of Service:\n{e}")
+
+    def _maybe_warn_order_rules(self) -> None:
+        """
+        When an UNBILLED order is loaded, warn (once) if it exceeds Max-Units
+        limits or contains an incompatible item combination, so the user can
+        correct THIS order before billing. Path-independent: catches refills
+        created by any code path, since the new order opens here.
+        """
+        try:
+            from dmelogic.order_rules import (
+                evaluate_order_object, warn_order_needs_edit,
+                order_is_editable_prebilling,
+            )
+            if not self.order or not order_is_editable_prebilling(self.order):
+                return
+            # Warn once per order id (not on every refresh of the same order).
+            if getattr(self, "_rule_warned_order_id", None) == self.order_id:
+                return
+            report = evaluate_order_object(self.order, self.folder_path)
+            if report.has_issues:
+                self._rule_warned_order_id = self.order_id
+                warn_order_needs_edit(self, self.order, report)
+        except Exception as e:
+            debug_log(f"[order_rules] editor rule warning skipped: {e}")
+
     def _create_separator(self) -> QFrame:
         """Create a horizontal separator line."""
         line = QFrame()
@@ -793,7 +845,8 @@ class OrderEditorDialog(QDialog):
             
             self._bind_order_to_ui()
             debug_log(f"Order {self._format_order_number()} loaded successfully")
-            
+            self._maybe_warn_order_rules()
+
         except Exception as e:
             QMessageBox.critical(
                 self,
@@ -802,6 +855,61 @@ class OrderEditorDialog(QDialog):
             )
             debug_log(f"Error loading order {self.order_id}: {e}")
             self.reject()
+
+    def _fetch_live_patient_row(self):
+        """Return patient row by patient_id with name fallback for legacy orders."""
+        if not self.order:
+            return None
+
+        try:
+            from dmelogic.db.base import get_connection
+
+            conn = get_connection("patients.db", folder_path=self.folder_path)
+            try:
+                cursor = conn.cursor()
+
+                patient_id = getattr(self.order, "patient_id", None)
+                if patient_id:
+                    cursor.execute(
+                        """
+                        SELECT last_name, first_name, dob, phone, address, city, state, zip
+                        FROM patients WHERE id = ?
+                        """,
+                        (patient_id,),
+                    )
+                    row = cursor.fetchone()
+                    if row:
+                        return row
+
+                # Fallback for legacy orders with missing patient_id.
+                last_name = (getattr(self.order, "patient_last_name", "") or "").strip()
+                first_name = (getattr(self.order, "patient_first_name", "") or "").strip()
+
+                if (not last_name or not first_name) and getattr(self.order, "patient_name", None):
+                    parts = str(self.order.patient_name).split(",", 1)
+                    if len(parts) == 2:
+                        last_name = last_name or parts[0].strip()
+                        first_name = first_name or parts[1].strip()
+
+                if last_name and first_name:
+                    cursor.execute(
+                        """
+                        SELECT last_name, first_name, dob, phone, address, city, state, zip
+                        FROM patients
+                        WHERE UPPER(last_name) = UPPER(?) AND UPPER(first_name) = UPPER(?)
+                        ORDER BY id DESC
+                        LIMIT 1
+                        """,
+                        (last_name, first_name),
+                    )
+                    return cursor.fetchone()
+
+                return None
+            finally:
+                conn.close()
+        except Exception as e:
+            debug_log(f"[order-editor] Failed live patient lookup: {e}")
+            return None
     
     def _bind_order_to_ui(self):
         """Populate UI fields from loaded order."""
@@ -815,13 +923,22 @@ class OrderEditorDialog(QDialog):
         # Load Reserved RX panel data
         if hasattr(self, 'rx_panel'):
             self.rx_panel.load(str(self.order.id))
+
+        live_patient = self._fetch_live_patient_row()
         
         # Patient section - use legacy flat fields (from orders table)
         self.patient_name.setText(self.order.patient_full_name or "N/A")
-        self.patient_dob.setText(_safe_format_date(self.order.patient_dob))
-        self.patient_phone.setText(
-            self.order.patient_phone or "N/A"
-        )
+        if live_patient:
+            self.patient_dob.setText(live_patient[2] or _safe_format_date(self.order.patient_dob))
+            self.patient_phone.setText(live_patient[3] or self.order.patient_phone or "N/A")
+            # Keep in-memory snapshot aligned for this session.
+            self.order.patient_dob = live_patient[2] or self.order.patient_dob
+            self.order.patient_phone = live_patient[3] or self.order.patient_phone
+        else:
+            self.patient_dob.setText(_safe_format_date(self.order.patient_dob))
+            self.patient_phone.setText(
+                self.order.patient_phone or "N/A"
+            )
         
         # Patient address - prefer patients.db (by patient_id, else name), fallback to order snapshot
         patient_db_path = resolve_db_path("patients.db", folder_path=self.folder_path)
@@ -905,7 +1022,19 @@ class OrderEditorDialog(QDialog):
         elif hasattr(self.order, 'billing_selection') and self.order.billing_selection:
             billing_val = self.order.billing_selection
         self.billing_type.setText(billing_val)
-        
+
+        # Place of Service (guard so programmatic set doesn't trigger a save)
+        try:
+            from dmelogic.place_of_service import place_of_service_code
+            code = place_of_service_code(getattr(self.order, "place_of_service", None))
+            self._pos_loading = True
+            for idx in range(self.place_of_service_combo.count()):
+                if place_of_service_code(self.place_of_service_combo.itemText(idx)) == code:
+                    self.place_of_service_combo.setCurrentIndex(idx)
+                    break
+        finally:
+            self._pos_loading = False
+
         # Clinical section (editable date fields)
         self.rx_date.setText(_safe_format_date(self.order.rx_date) or "")
         self.rx_date_2.setText(_safe_format_date(getattr(self.order, 'rx_date_2', None)) or "")
@@ -981,9 +1110,46 @@ class OrderEditorDialog(QDialog):
     def _on_item_cell_changed(self, _item):
         if self._suppress_item_change:
             return
+        self._refresh_item_amounts_from_table()
         self._items_dirty = True
         self.save_items_btn.setEnabled(True)
         self.save_button.setEnabled(True)
+
+    def _table_decimal(self, row: int, column: int) -> Decimal:
+        item = self.items_table.item(row, column)
+        text = item.text().strip().replace("$", "").replace(",", "") if item else ""
+        try:
+            return Decimal(text) if text else Decimal("0")
+        except Exception:
+            return Decimal("0")
+
+    def _table_int(self, row: int, column: int, default: int = 0) -> int:
+        item = self.items_table.item(row, column)
+        text = item.text().strip() if item else ""
+        try:
+            return int(text) if text else default
+        except Exception:
+            return default
+
+    def _refresh_item_amounts_from_table(self) -> None:
+        """Recalculate read-only line amounts and the order total from visible rows."""
+        total = Decimal("0.00")
+        self._suppress_item_change = True
+        try:
+            for row in range(self.items_table.rowCount()):
+                qty_val = self._table_int(row, 3, 0)
+                unit_price = self._table_decimal(row, 7)
+                line_total = unit_price * Decimal(str(qty_val)) if qty_val else Decimal("0.00")
+                amount_item = self.items_table.item(row, 8)
+                if amount_item is None:
+                    amount_item = QTableWidgetItem()
+                    amount_item.setFlags(amount_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    self.items_table.setItem(row, 8, amount_item)
+                amount_item.setText(f"{line_total:.2f}")
+                total += line_total
+            self.order_total_label.setText(f"${total:.2f}")
+        finally:
+            self._suppress_item_change = False
 
     def _on_prescriber_changed(self, row: int, combo_index: int):
         """Handle prescriber dropdown change for an item row."""
@@ -1004,7 +1170,7 @@ class OrderEditorDialog(QDialog):
             return
         
         # Get selected prescriber data from combo
-        combo = self.items_table.cellWidget(row, 8)
+        combo = self.items_table.cellWidget(row, 9)
         if not combo:
             return
         
@@ -1057,9 +1223,16 @@ class OrderEditorDialog(QDialog):
         row = self.items_table.rowCount()
         self._suppress_item_change = True
         self.items_table.insertRow(row)
-        values = [hcpcs, item_number, desc, qty, refills, days, mods, cost]  # Item # is column 1
+        try:
+            amount = Decimal(str(cost or "0")) * Decimal(str(qty or "0"))
+        except Exception:
+            amount = Decimal("0.00")
+        values = [hcpcs, item_number, desc, qty, refills, days, mods, cost, f"{amount:.2f}"]
         for col, val in enumerate(values):
-            self.items_table.setItem(row, col, QTableWidgetItem(str(val)))
+            table_item = QTableWidgetItem(str(val))
+            if col == 8:
+                table_item.setFlags(table_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.items_table.setItem(row, col, table_item)
         
         # Add prescriber combo for new item
         prescriber_combo = QComboBox()
@@ -1078,7 +1251,7 @@ class OrderEditorDialog(QDialog):
         prescriber_combo.currentIndexChanged.connect(
             lambda idx, r=row: self._on_prescriber_changed(r, idx)
         )
-        self.items_table.setCellWidget(row, 8, prescriber_combo)
+        self.items_table.setCellWidget(row, 9, prescriber_combo)
         
         self._item_row_meta.append({"id": None, "is_new": True})
         self._suppress_item_change = False
@@ -1176,7 +1349,7 @@ class OrderEditorDialog(QDialog):
                 return item.text().strip() if item else ""
 
             hcpcs = _text(0)
-            # Skip column 1 (Item #)
+            item_number = _text(1)
             desc = _text(2)
             qty = _text(3)
             refills = _text(4)
@@ -1211,8 +1384,8 @@ class OrderEditorDialog(QDialog):
             cost_val = _to_decimal(cost)
             total_val = cost_val * Decimal(str(qty_val)) if qty_val else Decimal("0")
 
-            # Get prescriber from combo box (column 8)
-            prescriber_combo = self.items_table.cellWidget(row, 8)
+            # Get prescriber from combo box
+            prescriber_combo = self.items_table.cellWidget(row, 9)
             prescriber_name = ""
             prescriber_npi = ""
             if prescriber_combo:
@@ -1231,6 +1404,7 @@ class OrderEditorDialog(QDialog):
                         {
                             "hcpcs_code": hcpcs,
                             "description": desc,
+                            "item_number": item_number,
                             "qty": qty_val,
                             "refills": refills_val,
                             "day_supply": days_val,
@@ -1262,6 +1436,7 @@ class OrderEditorDialog(QDialog):
                             "qty": qty_val,
                             "refills": refills_val,
                             "day_supply": days_val,
+                            "item_number": item_number,
                             "cost_ea": str(cost_val),
                             "total": str(total_val),
                             "modifier1": mod1,
@@ -1379,10 +1554,18 @@ class OrderEditorDialog(QDialog):
             modifiers = format_modifiers_for_display(item)
             self.items_table.setItem(row, 6, QTableWidgetItem(modifiers))
             
-            # Cost
-            cost_val = item.cost_ea or Decimal("0")
-            cost_text = f"{cost_val:.2f}"
-            self.items_table.setItem(row, 7, QTableWidgetItem(cost_text))
+            pricing = line_pricing_for_order_item(
+                item,
+                folder_path=self.folder_path,
+                hcpcs_candidates=(full_hcpcs, display_hcpcs),
+                item_number=item_number,
+            )
+
+            # Billing unit price and calculated line amount
+            self.items_table.setItem(row, 7, QTableWidgetItem(f"{pricing.unit_price:.2f}"))
+            amount_item = QTableWidgetItem(f"{pricing.total:.2f}")
+            amount_item.setFlags(amount_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.items_table.setItem(row, 8, amount_item)
 
             # Prescriber dropdown
             prescriber_combo = QComboBox()
@@ -1411,7 +1594,7 @@ class OrderEditorDialog(QDialog):
             prescriber_combo.currentIndexChanged.connect(
                 lambda idx, r=row: self._on_prescriber_changed(r, idx)
             )
-            self.items_table.setCellWidget(row, 8, prescriber_combo)
+            self.items_table.setCellWidget(row, 9, prescriber_combo)
 
             # Store full metadata for sync with EPACES helper
             self._item_row_meta.append({
@@ -1424,9 +1607,7 @@ class OrderEditorDialog(QDialog):
                 "rental_month": getattr(item, "rental_month", 0),
             })
         
-        # Update total
-        total = self.order.order_total
-        self.order_total_label.setText(f"${total:.2f}")
+        self._refresh_item_amounts_from_table()
         self._suppress_item_change = False
         self.save_items_btn.setEnabled(False)
     
@@ -1733,12 +1914,16 @@ class OrderEditorDialog(QDialog):
             return
         
         try:
-            # Process the refill (creates new order, locks source order)
-            refill_order = process_refill(
-                order_id=self.order.id,
-                folder_path=self.folder_path or ""
+            # Process the refill (creates new order, locks source order).
+            # run_refill_with_override enforces Max-Units limits and incompatible
+            # item combinations, prompting for an override when they are hit.
+            from dmelogic.order_rules import run_refill_with_override
+            refill_order = run_refill_with_override(
+                self, self.order.id, folder_path=self.folder_path or ""
             )
-            
+            if refill_order is None:
+                return  # user declined the override
+
             # Show success message
             refill_display = f"{refill_order.id}"
             if refill_order.parent_order_id and refill_order.refill_number > 0:
@@ -2759,8 +2944,8 @@ class OrderEditorDialog(QDialog):
             # Parse modifiers
             mod_parts = [m for m in mods.replace(",", " ").split() if m]
             
-            # Get prescriber from combo (column 8)
-            prescriber_combo = self.items_table.cellWidget(row, 8)
+            # Get prescriber from combo
+            prescriber_combo = self.items_table.cellWidget(row, 9)
             prescriber_name = ""
             prescriber_npi = ""
             if prescriber_combo:
@@ -3327,20 +3512,7 @@ class OrderEditorDialog(QDialog):
     def _refresh_patient_display(self):
         """Refresh patient display after editing."""
         try:
-            from dmelogic.db.base import get_connection
-            
-            patient_id = self.order.patient_id
-            if not patient_id:
-                return
-            
-            conn = get_connection("patients.db", folder_path=self.folder_path)
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT last_name, first_name, dob, phone, address, city, state, zip
-                FROM patients WHERE id = ?
-            """, (patient_id,))
-            row = cursor.fetchone()
-            conn.close()
+            row = self._fetch_live_patient_row()
             
             if row:
                 patient_name = f"{row[0]}, {row[1]}" if row[1] else row[0]
@@ -3349,6 +3521,12 @@ class OrderEditorDialog(QDialog):
                 self.patient_phone.setText(row[3] or "N/A")
                 addr_parts = [p for p in [row[4], row[5], row[6], row[7]] if p]
                 self.patient_address.setText(", ".join(addr_parts) if addr_parts else "N/A")
+
+                # Keep in-memory order snapshot in sync with latest patient values.
+                self.order.patient_last_name = row[0] or getattr(self.order, "patient_last_name", None)
+                self.order.patient_first_name = row[1] or getattr(self.order, "patient_first_name", None)
+                self.order.patient_dob = row[2] or None
+                self.order.patient_phone = row[3] or None
         except Exception as e:
             print(f"Error refreshing patient display: {e}")
     
@@ -3464,6 +3642,76 @@ class OrderEditorDialog(QDialog):
                 
                 conn.commit()
                 conn.close()
+
+                # Keep this order's patient snapshot in sync so DOB changes stick
+                # after closing and reopening the order editor.
+                if self.order and self.order.id:
+                    patient_last = fields["last_name"].text().strip()
+                    patient_first = fields["first_name"].text().strip()
+                    patient_dob = fields["dob"].text().strip() or None
+                    patient_phone = fields["phone"].text().strip() or None
+                    patient_primary_ins = fields["primary_insurance"].text().strip() or None
+                    patient_primary_id = fields["policy_number"].text().strip() or None
+                    patient_secondary_ins = fields["secondary_insurance"].text().strip() or None
+                    patient_secondary_id = fields["secondary_insurance_id"].text().strip() or None
+
+                    addr_parts = [
+                        fields["address"].text().strip(),
+                        fields["city"].text().strip(),
+                        fields["state"].text().strip(),
+                        fields["zip"].text().strip(),
+                    ]
+                    patient_address = ", ".join([part for part in addr_parts if part]) or None
+                    patient_name = f"{patient_last}, {patient_first}" if patient_first else patient_last
+
+                    orders_conn = get_connection("orders.db", folder_path=self.folder_path)
+                    try:
+                        orders_cursor = orders_conn.cursor()
+                        orders_cursor.execute(
+                            """
+                            UPDATE orders SET
+                                patient_last_name = ?,
+                                patient_first_name = ?,
+                                patient_dob = ?,
+                                patient_phone = ?,
+                                patient_address = ?,
+                                patient_name = ?,
+                                primary_insurance = ?,
+                                primary_insurance_id = ?,
+                                secondary_insurance = ?,
+                                secondary_insurance_id = ?,
+                                updated_date = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                            """,
+                            (
+                                patient_last or None,
+                                patient_first or None,
+                                patient_dob,
+                                patient_phone,
+                                patient_address,
+                                patient_name or None,
+                                patient_primary_ins,
+                                patient_primary_id,
+                                patient_secondary_ins,
+                                patient_secondary_id,
+                                self.order.id,
+                            ),
+                        )
+                        orders_conn.commit()
+                    finally:
+                        orders_conn.close()
+
+                    # Keep in-memory order data aligned with the database snapshot.
+                    self.order.patient_last_name = patient_last or None
+                    self.order.patient_first_name = patient_first or None
+                    self.order.patient_name = patient_name or None
+                    self.order.patient_dob = patient_dob
+                    self.order.patient_phone = patient_phone
+                    self.order.patient_address = patient_address
+                    self.order.primary_insurance = patient_primary_ins
+                    self.order.primary_insurance_id = patient_primary_id
+                    self.order.secondary_insurance = patient_secondary_ins
+                    self.order.secondary_insurance_id = patient_secondary_id
                 
                 # Refresh display
                 self._refresh_patient_display()
@@ -3571,7 +3819,13 @@ class OrderEditorDialog(QDialog):
                     self.patient_dob.setText(row[0] or "N/A")
                     self.patient_phone.setText(row[1] or "N/A")
                     addr_parts = [p for p in [row[2], row[3], row[4], row[5]] if p]
-                    self.patient_address.setText(", ".join(addr_parts) if addr_parts else "N/A")
+                    patient_address = ", ".join(addr_parts) if addr_parts else "N/A"
+                    self.patient_address.setText(patient_address)
+
+                    # Keep in-memory snapshot consistent with what is shown in UI.
+                    self.order.patient_dob = row[0] or None
+                    self.order.patient_phone = row[1] or None
+                    self.order.patient_address = patient_address if patient_address != "N/A" else None
             except:
                 pass  # Keep whatever is displayed
             
@@ -3643,6 +3897,29 @@ class OrderEditorDialog(QDialog):
                     update_values.append(self.order.patient_last_name)
                     update_parts.append("patient_first_name = ?")
                     update_values.append(self.order.patient_first_name)
+
+                    # Persist patient snapshot fields so DOB edits are retained
+                    # on the order after reassignment.
+                    snapshot_dob = (self.patient_dob.text() or "").strip()
+                    if snapshot_dob in ("N/A", "[Select Patient]"):
+                        snapshot_dob = ""
+                    snapshot_phone = (self.patient_phone.text() or "").strip()
+                    if snapshot_phone in ("N/A", "[Select Patient]"):
+                        snapshot_phone = ""
+                    snapshot_address = (self.patient_address.text() or "").strip()
+                    if snapshot_address in ("N/A", "[Select Patient]"):
+                        snapshot_address = ""
+
+                    update_parts.append("patient_dob = ?")
+                    update_values.append(snapshot_dob or None)
+                    update_parts.append("patient_phone = ?")
+                    update_values.append(snapshot_phone or None)
+                    update_parts.append("patient_address = ?")
+                    update_values.append(snapshot_address or None)
+
+                    self.order.patient_dob = snapshot_dob or None
+                    self.order.patient_phone = snapshot_phone or None
+                    self.order.patient_address = snapshot_address or None
                 
                 # Only update insurance if it was changed
                 if getattr(self, '_insurance_changed', False):
@@ -3962,6 +4239,8 @@ class ItemEditorDialog(QDialog):
     def __init__(self, item, parent=None):
         super().__init__(parent)
         self.item = item
+        self.folder_path = getattr(parent, "folder_path", None)
+        self._pricing = line_pricing_for_order_item(item, folder_path=self.folder_path)
         self.setWindowTitle(f"Edit Item - {item.hcpcs_code}")
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowMinMaxButtonsHint)
         self.setMinimumWidth(450)
@@ -4007,11 +4286,14 @@ class ItemEditorDialog(QDialog):
         self.days_edit.setMaximumWidth(80)
         edit_layout.addRow("Days Supply:", self.days_edit)
         
-        # Cost
-        cost_val = f"{self.item.cost_ea or 0:.2f}"
+        # Billing price
+        cost_val = f"{self._pricing.unit_price:.2f}"
         self.cost_edit = QLineEdit(cost_val)
         self.cost_edit.setMaximumWidth(100)
-        edit_layout.addRow("Cost Each ($):", self.cost_edit)
+        edit_layout.addRow("Bill Each ($):", self.cost_edit)
+
+        self.amount_label = QLabel(f"${self._pricing.total:.2f}")
+        edit_layout.addRow("Line Amount:", self.amount_label)
         
         layout.addWidget(edit_group)
         
@@ -4076,9 +4358,12 @@ class ItemEditorDialog(QDialog):
         """Get the updated field values."""
         updates = {}
         
+        qty_for_total = self.item.quantity or 0
+
         # Quantity
         try:
             qty = int(self.qty_edit.text().strip())
+            qty_for_total = qty
             if qty != self.item.quantity:
                 updates["qty"] = qty
         except ValueError:
@@ -4103,11 +4388,12 @@ class ItemEditorDialog(QDialog):
         # Cost
         try:
             cost = Decimal(self.cost_edit.text().strip())
-            if cost != (self.item.cost_ea or Decimal("0")):
+            saved_cost = self.item.cost_ea or Decimal("0")
+            total = cost * Decimal(str(qty_for_total)) if qty_for_total else Decimal("0")
+            if cost != saved_cost:
                 updates["cost_ea"] = str(cost)
-                # Also update total
-                qty = int(self.qty_edit.text().strip()) if self.qty_edit.text().strip() else self.item.quantity
-                updates["total"] = str(cost * qty)
+            if updates.get("qty") is not None or cost != saved_cost or total != (self.item.total_cost or Decimal("0")):
+                updates["total"] = str(total)
         except:
             pass
         

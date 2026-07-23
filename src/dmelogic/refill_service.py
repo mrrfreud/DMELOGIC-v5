@@ -20,6 +20,7 @@ from dmelogic.db import orders as orders_repo
 from dmelogic.db.base import UnitOfWork
 from dmelogic.db.models import Order, OrderItemInput, OrderInput, OrderStatus
 from dmelogic.config import debug_log
+from dmelogic.place_of_service import place_of_service_code
 
 
 REFILL_MAX_AGE_DAYS = 365
@@ -189,6 +190,13 @@ def process_refill(
         if not refillable_items:
             raise RefillError("All items are out of refills; no refill order created.")
 
+        # Note: Max-Units / incompatible-item rules are NOT enforced here.
+        # A refill always creates the new, current-dated order by cloning the
+        # source; the source order (already filled/billed) must never be edited.
+        # Any quantity/combination correction is flagged by the UI on the NEW
+        # order so it can be fixed there before billing (see order_rules
+        # .run_refill_with_override / evaluate_order_object).
+
         # 3) Compute base order + next refill number
         base_order_id, next_refill = _compute_base_and_next_refill_number(src, folder_path)
 
@@ -232,6 +240,7 @@ def process_refill(
             items=refillable_items,
             parent_order_id=base_order_id,
             refill_number=next_refill,
+            place_of_service=place_of_service_code(getattr(src, "place_of_service", None)),
         )
 
         # 6) Persist new order (refill_completed=0 is the default, ensuring it shows due date not REFILLED)

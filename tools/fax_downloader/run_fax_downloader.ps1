@@ -33,8 +33,29 @@ if (Test-Path -LiteralPath $envPath) {
 $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 Add-Content -LiteralPath $logPath -Value "[$timestamp] Starting fax downloader"
 
-& $pythonExe $scriptPath *>> $logPath
-$exitCode = $LASTEXITCODE
+$prevNativePref = $null
+$hasNativePref = $false
+if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -Scope Global -ErrorAction SilentlyContinue) {
+    $hasNativePref = $true
+    $prevNativePref = $global:PSNativeCommandUseErrorActionPreference
+    $global:PSNativeCommandUseErrorActionPreference = $false
+}
+
+$exitCode = 1
+try {
+    & $pythonExe $scriptPath *>> $logPath
+    $exitCode = $LASTEXITCODE
+}
+catch {
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    Add-Content -LiteralPath $logPath -Value "[$timestamp] Wrapper error: $($_.Exception.Message)"
+    $exitCode = 1
+}
+finally {
+    if ($hasNativePref) {
+        $global:PSNativeCommandUseErrorActionPreference = $prevNativePref
+    }
+}
 
 if ($exitCode -ne 0) {
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"

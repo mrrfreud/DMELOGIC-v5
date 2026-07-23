@@ -14533,6 +14533,24 @@ class PDFViewer(QMainWindow):
     
     # ── Nova ────────────────────────────────────────────────────────────
     NOVA_UI_URL = "http://127.0.0.1:8401"
+    DMELOGIC_API_URL = "http://127.0.0.1:8400"
+
+    def _is_dmelogic_api_reachable(self, timeout: float = 1.0) -> bool:
+        """Best-effort probe for local DMELogic API availability."""
+        import socket
+        import urllib.request
+
+        health_url = f"{self.DMELOGIC_API_URL}/health"
+        try:
+            with urllib.request.urlopen(health_url, timeout=timeout):
+                return True
+        except Exception:
+            # Fallback to bare TCP check in case the endpoint path changes.
+            try:
+                with socket.create_connection(("127.0.0.1", 8400), timeout=timeout):
+                    return True
+            except Exception:
+                return False
 
     def launch_nova(self):
         """Ensure Nova background services are running, then open the Nova UI.
@@ -14590,6 +14608,84 @@ class PDFViewer(QMainWindow):
                 pass
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Could not launch Nova: {e}")
+
+    def start_dmelogic_api_from_ui(self):
+        """Start the local DMELogic API host (port 8400) on demand."""
+        import time
+
+        try:
+            if self._is_dmelogic_api_reachable(timeout=0.6):
+                QMessageBox.information(
+                    self,
+                    "DMELogic API",
+                    f"DMELogic API is already running at {self.DMELOGIC_API_URL}",
+                )
+                try:
+                    self.statusBar().showMessage("DMELogic API already running", 4000)
+                except Exception:
+                    pass
+                return
+
+            from dmelogic.paths import get_project_root
+            from dmelogic.services.nova_background import ensure_dmelogic_api_service
+
+            ensure_dmelogic_api_service(get_project_root(), enabled=True)
+
+            ready = False
+            deadline = time.time() + 8.0
+            while time.time() < deadline:
+                if self._is_dmelogic_api_reachable(timeout=0.8):
+                    ready = True
+                    break
+                time.sleep(0.25)
+
+            if ready:
+                QMessageBox.information(
+                    self,
+                    "DMELogic API Started",
+                    "DMELogic API is now running.\n\n"
+                    f"Base URL: {self.DMELOGIC_API_URL}\n"
+                    f"Docs: {self.DMELOGIC_API_URL}/docs",
+                )
+                try:
+                    self.statusBar().showMessage("DMELogic API started", 5000)
+                except Exception:
+                    pass
+            else:
+                QMessageBox.warning(
+                    self,
+                    "DMELogic API Starting",
+                    "Start command was sent, but API is not reachable yet.\n"
+                    "Please wait a few seconds and try status check again.",
+                )
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Could not start DMELogic API: {e}")
+
+    def check_dmelogic_api_status(self):
+        """Show current local DMELogic API availability."""
+        try:
+            if self._is_dmelogic_api_reachable(timeout=0.8):
+                QMessageBox.information(
+                    self,
+                    "DMELogic API Status",
+                    f"Running at {self.DMELOGIC_API_URL}",
+                )
+                try:
+                    self.statusBar().showMessage("DMELogic API is running", 4000)
+                except Exception:
+                    pass
+            else:
+                QMessageBox.warning(
+                    self,
+                    "DMELogic API Status",
+                    "DMELogic API is not running.",
+                )
+                try:
+                    self.statusBar().showMessage("DMELogic API is not running", 4000)
+                except Exception:
+                    pass
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Could not check DMELogic API status: {e}")
 
     def set_nova_enabled(self, enabled: bool):
         """Persist the Nova auto-start preference to the data-root .env.
@@ -17525,12 +17621,67 @@ class PDFViewer(QMainWindow):
             if hasattr(self, 'orders_summary_label'):
                 self.orders_summary_label.setText("Error reading order")
 
+    def _current_orders_max_id(self):
+        """Return the highest orders.id currently in the DB, or None on error."""
+        try:
+            conn = sqlite3.connect(self.orders_db_path)
+            try:
+                row = conn.execute("SELECT MAX(id) FROM orders").fetchone()
+            finally:
+                conn.close()
+            return row[0] if row else None
+        except Exception:
+            return None
+
+    def _ensure_orders_autorefresh(self):
+        """Start a lightweight poller that reloads the Orders grid when
+        externally-created orders (phone/agent/API) land in the database.
+
+        The desktop grid only auto-refreshes for orders created in-process
+        (via the wizard's order_created signal). Orders written by the
+        separate Nova API process don't fire that signal, so we poll the
+        DB's MAX(id) on a timer and reload only when it actually changes.
+        """
+        if getattr(self, '_orders_autorefresh_timer', None) is not None:
+            return
+        try:
+            timer = QTimer(self)
+            timer.setInterval(4000)
+            timer.timeout.connect(self._poll_external_orders)
+            timer.start()
+            self._orders_autorefresh_timer = timer
+        except Exception as e:
+            print(f"Could not start orders auto-refresh timer: {e}")
+
+    def _poll_external_orders(self):
+        """Timer slot: reload orders if new rows appeared in the DB."""
+        try:
+            if not hasattr(self, 'orders_db_path'):
+                return
+            # Don't fight an in-progress table rebuild or inline edit.
+            if getattr(self, '_orders_updating', False):
+                return
+            cur_max = self._current_orders_max_id()
+            if cur_max is None:
+                return
+            seen = getattr(self, '_orders_seen_max_id', None)
+            if seen is not None and cur_max != seen:
+                self.load_orders()
+        except Exception as e:
+            print(f"Orders auto-refresh poll failed: {e}")
+
     def load_orders(self):
         """Load orders from database into the orders table - ONE ROW PER ITEM."""
         try:
             if not hasattr(self, 'orders_db_path'):
                 return
-            
+
+            # Make sure the background auto-refresh poller is running, and
+            # record the current max order id as the baseline so the poller
+            # only reloads when a NEWER (external) order appears.
+            self._ensure_orders_autorefresh()
+            self._orders_seen_max_id = self._current_orders_max_id()
+
             # Refresh the pending approval panel (agent orders) if present
             if hasattr(self, 'pending_approval_panel'):
                 try:
@@ -23810,6 +23961,16 @@ class PDFViewer(QMainWindow):
             launch_nova_action.setToolTip('Start Nova (if needed) and open the Nova assistant')
             launch_nova_action.triggered.connect(self.launch_nova)
             nova_menu.addAction(launch_nova_action)
+
+            start_api_action = QAction('▶ Start DMELogic API', self)
+            start_api_action.setToolTip('Start the local DMELogic API host on port 8400')
+            start_api_action.triggered.connect(self.start_dmelogic_api_from_ui)
+            nova_menu.addAction(start_api_action)
+
+            check_api_action = QAction('🩺 Check DMELogic API Status', self)
+            check_api_action.setToolTip('Check whether the local DMELogic API is reachable')
+            check_api_action.triggered.connect(self.check_dmelogic_api_status)
+            nova_menu.addAction(check_api_action)
 
             nova_menu.addSeparator()
 
@@ -31282,9 +31443,10 @@ class PDFViewer(QMainWindow):
         2. Manually from the orders context menu or button
         """
         try:
-            # If no order_id provided, get from selected row
-            # Guard against boolean values from Qt signal args (clicked sends False)
-            if order_id is None or isinstance(order_id, bool):
+            # If no order_id provided, get from selected row.
+            # Guard against boolean values from Qt signal args (clicked sends False).
+            manual_invoke = order_id is None or isinstance(order_id, bool)
+            if manual_invoke:
                 row = self.orders_table.currentRow()
                 if row < 0:
                     QMessageBox.warning(self, "No Selection", "Please select an order to create a refill request.")
@@ -31391,7 +31553,11 @@ class PDFViewer(QMainWindow):
                 QMessageBox.information(self, "No Items", "No items found in this order to request refills for.")
                 return
 
-            request_result = self._edit_refill_request_items(request_items, dx_codes)
+            request_result = self._edit_refill_request_items(
+                request_items,
+                dx_codes,
+                launch_add_items_first=manual_invoke,
+            )
             if request_result is None:  # user canceled
                 return
             request_items, dx_codes = request_result
@@ -31417,7 +31583,7 @@ class PDFViewer(QMainWindow):
             import traceback
             traceback.print_exc()
 
-    def _edit_refill_request_items(self, initial_items, initial_dx_codes=None):
+    def _edit_refill_request_items(self, initial_items, initial_dx_codes=None, launch_add_items_first=False):
         """Review pre-populated order items and optionally add more lines."""
         from PyQt6.QtWidgets import (
             QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -31617,6 +31783,11 @@ class PDFViewer(QMainWindow):
         done_btn.clicked.connect(dialog.accept)
         btn_layout.addWidget(done_btn)
         layout.addLayout(btn_layout)
+
+        # Manual launches from the Refill Request button should begin with the
+        # Add Item picker, matching prior workflow behavior.
+        if launch_add_items_first:
+            add_more_items()
 
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
@@ -37482,6 +37653,11 @@ class PDFViewer(QMainWindow):
         try:
             from dmelogic.refill_service import process_refill, RefillError
 
+            checked_order_ids = self._checked_order_ids() if hasattr(self, "_checked_order_ids") else []
+            if len(checked_order_ids) > 1:
+                self._process_checked_refills(checked_order_ids)
+                return
+
             row = self.orders_table.currentRow()
             if row < 0:
                 QMessageBox.warning(self, "No Selection", "Please select an order to process a refill.")
@@ -37654,8 +37830,15 @@ class PDFViewer(QMainWindow):
                         min_refills = min(min_refills, r)
                     if min_refills == 999:
                         min_refills = 0
-                    # Get patient name for dialog
-                    patient_text = self.orders_table.item(row, 1).text() if self.orders_table.item(row, 1) else ""
+                    # Get patient name for dialog — from the just-created order
+                    # object, NEVER from the table: load_orders() above re-sorts
+                    # the rows, so a saved row index now points at a different
+                    # patient (this used to show the wrong patient's name).
+                    patient_text = getattr(new_order, "patient_full_name", "") or ""
+                    if not patient_text:
+                        _last = getattr(new_order, "patient_last_name", "") or ""
+                        _first = getattr(new_order, "patient_first_name", "") or ""
+                        patient_text = f"{_last}, {_first}".strip(", ")
                     handle_last_refill(
                         parent_widget=self,
                         db_path=self.orders_db_path,
@@ -38490,29 +38673,80 @@ class PDFViewer(QMainWindow):
         """Perform an automatic backup when triggered by the scheduler."""
         try:
             from dmelogic.backup import BackupWorker as DmeBackupWorker
-            
-            print(f"Starting automatic {backup_type} backup...")
-            
+
+            requested_type = (backup_type or "daily").strip().lower()
+            if requested_type not in ("daily", "weekly", "manual"):
+                requested_type = "daily"
+
+            if not hasattr(self, "_auto_backup_threads"):
+                self._auto_backup_threads = []
+            if not hasattr(self, "_pending_auto_backup_types"):
+                self._pending_auto_backup_types = []
+
+            # Keep scheduling serialized. If one backup is still running,
+            # queue the next request instead of replacing live thread refs.
+            running = any(t is not None and t.isRunning() for t in self._auto_backup_threads)
+            if running:
+                if requested_type not in self._pending_auto_backup_types:
+                    self._pending_auto_backup_types.append(requested_type)
+                print(
+                    f"Auto-backup already running; queued {requested_type} backup "
+                    f"(pending: {self._pending_auto_backup_types})"
+                )
+                return
+
+            print(f"Starting automatic {requested_type} backup...")
+
             # Create backup worker
             worker = DmeBackupWorker(
                 mode="backup",
                 source_path=self.folder_path,
-                backup_type=backup_type,
+                backup_type=requested_type,
                 auto_discover=True,
             )
-            
+
             # Run in a background thread
-            self._auto_backup_thread = QThread()
-            worker.moveToThread(self._auto_backup_thread)
+            thread = QThread(self)
+            worker.moveToThread(thread)
             worker.finished.connect(lambda path: print(f"Auto-backup complete: {path}"))
             worker.error.connect(lambda err: print(f"Auto-backup error: {err}"))
-            worker.finished.connect(self._auto_backup_thread.quit)
-            worker.error.connect(self._auto_backup_thread.quit)
-            self._auto_backup_thread.started.connect(worker.run)
-            self._auto_backup_thread.start()
-            
-            # Keep reference to worker to prevent garbage collection
+            worker.finished.connect(thread.quit)
+            worker.error.connect(thread.quit)
+            thread.started.connect(worker.run)
+            thread.finished.connect(worker.deleteLater)
+            thread.finished.connect(thread.deleteLater)
+
+            def _cleanup_and_continue():
+                try:
+                    if hasattr(self, "_auto_backup_threads"):
+                        self._auto_backup_threads = [
+                            t for t in self._auto_backup_threads
+                            if t is not None and t is not thread
+                        ]
+                except Exception:
+                    pass
+
+                try:
+                    if hasattr(self, "_auto_backup_thread") and self._auto_backup_thread is thread:
+                        self._auto_backup_thread = None
+                    if hasattr(self, "_auto_backup_worker") and self._auto_backup_worker is worker:
+                        self._auto_backup_worker = None
+                except Exception:
+                    pass
+
+                try:
+                    if hasattr(self, "_pending_auto_backup_types") and self._pending_auto_backup_types:
+                        next_type = self._pending_auto_backup_types.pop(0)
+                        QTimer.singleShot(0, lambda: self.perform_auto_backup(next_type))
+                except Exception as e:
+                    print(f"Error processing queued auto-backup request: {e}")
+
+            thread.finished.connect(_cleanup_and_continue)
+
+            self._auto_backup_threads.append(thread)
+            self._auto_backup_thread = thread
             self._auto_backup_worker = worker
+            thread.start()
             
         except Exception as e:
             print(f"Auto-backup failed: {e}")
@@ -40211,7 +40445,10 @@ class PDFViewer(QMainWindow):
 
             folder_path = getattr(self, "folder_path", None)
             try:
-                new_order = process_refill(int(src_order_id), folder_path=folder_path)
+                from dmelogic.order_rules import run_refill_with_override
+                new_order = run_refill_with_override(self, src_order_id, folder_path=folder_path)
+                if new_order is None:
+                    return  # user declined the Max-Units / incompatible-item override
             except RefillError as e:
                 QMessageBox.critical(self, "Refill Error", f"Cannot process refill:\n\n{e}")
                 return
@@ -41555,6 +41792,247 @@ class PDFViewer(QMainWindow):
                 ids.append(oid)
         return ids
 
+    def _process_checked_refills(self, order_ids: list[int]) -> bool:
+        """Create refill orders for explicitly checked Orders-tab rows."""
+        if not order_ids:
+            return False
+
+        try:
+            from dmelogic.refill_service import process_refill, RefillError
+
+            reply = QMessageBox.question(
+                self,
+                "Process Checked Refills",
+                f"Create refill orders for {len(order_ids)} checked order(s)?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return False
+
+            progress = QProgressDialog("Processing checked refills...", "Cancel", 0, len(order_ids), self)
+            progress.setWindowTitle("Process Checked Refills")
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
+            progress.setMinimumDuration(0)
+            progress.show()
+
+            created_pairs: list[tuple[int, int]] = []
+            failures: list[tuple[int, str]] = []
+            folder_path = getattr(self, "folder_path", None)
+
+            for i, source_order_id in enumerate(order_ids):
+                if progress.wasCanceled():
+                    break
+
+                progress.setValue(i)
+                progress.setLabelText(f"Processing order {source_order_id}...")
+                QApplication.processEvents()
+
+                try:
+                    from dmelogic.order_rules import run_refill_with_override
+                    new_order = run_refill_with_override(self, source_order_id, folder_path=folder_path)
+                    if new_order is None:
+                        failures.append((int(source_order_id), "Skipped: over Max Units / incompatible items (not overridden)"))
+                        continue
+                    created_pairs.append((int(source_order_id), int(new_order.id)))
+                except RefillError as e:
+                    failures.append((int(source_order_id), str(e)))
+                except Exception as e:
+                    failures.append((int(source_order_id), str(e)))
+
+            progress.setValue(len(order_ids))
+
+            if created_pairs:
+                self.load_orders()
+
+            summary_lines = [f"Created {len(created_pairs)} refill order(s)."]
+            if failures:
+                summary_lines.append(f"Failed {len(failures)} order(s).")
+                preview = failures[:8]
+                summary_lines.extend([f"ORD-{oid}: {reason}" for oid, reason in preview])
+                if len(failures) > len(preview):
+                    summary_lines.append(f"...and {len(failures) - len(preview)} more.")
+
+            if failures:
+                QMessageBox.warning(self, "Process Checked Refills", "\n".join(summary_lines))
+            else:
+                QMessageBox.information(self, "Process Checked Refills", "\n".join(summary_lines))
+
+            return bool(created_pairs)
+        except Exception as e:
+            QMessageBox.critical(self, "Refill Error", f"Failed to process checked refills:\n\n{e}")
+            return False
+
+    def _bulk_update_status(self, order_ids: list[int]) -> bool:
+        """Update status for multiple checked orders."""
+        if not order_ids:
+            return False
+        try:
+            statuses = ["Pending", "Pending Approval", "Open", "Incomplete", "On Hold", "Shipped", "Delivered", "Denied", "Cancelled"]
+            status, ok = QInputDialog.getItem(
+                self, "Bulk Update Status",
+                f"Select new status for {len(order_ids)} order(s):",
+                statuses, 0, False
+            )
+            if not ok or not status:
+                return False
+
+            conn = sqlite3.connect(self.orders_db_path)
+            cursor = conn.cursor()
+            success_count = 0
+            for order_id in order_ids:
+                try:
+                    cursor.execute("UPDATE orders SET order_status = ? WHERE id = ?", (status, int(order_id)))
+                    success_count += 1
+                except Exception:
+                    pass
+            conn.commit()
+            conn.close()
+            self.load_orders()
+            QMessageBox.information(self, "Bulk Update Complete", f"Updated {success_count}/{len(order_ids)} order(s) to: {status}")
+            return bool(success_count)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to bulk update status:\n\n{e}")
+            return False
+
+    def _bulk_clear_delivery(self, order_ids: list[int]) -> bool:
+        """Clear delivery date for multiple checked orders."""
+        if not order_ids:
+            return False
+        try:
+            reply = QMessageBox.question(
+                self, "Clear Delivery Dates",
+                f"Clear delivery date for {len(order_ids)} order(s)?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return False
+            conn = sqlite3.connect(self.orders_db_path)
+            cursor = conn.cursor()
+            success_count = 0
+            for order_id in order_ids:
+                try:
+                    cursor.execute("UPDATE orders SET delivery_date = NULL, tracking_number = NULL WHERE id = ?", (int(order_id),))
+                    success_count += 1
+                except Exception:
+                    pass
+            conn.commit()
+            conn.close()
+            self.load_orders()
+            QMessageBox.information(self, "Bulk Clear Complete", f"Cleared delivery date for {success_count}/{len(order_ids)} order(s).")
+            return bool(success_count)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to bulk clear delivery:\n\n{e}")
+            return False
+
+    def _bulk_mark_delivered(self, order_ids: list[int]) -> bool:
+        """Mark multiple checked orders as delivered (set delivery_date to today if not set)."""
+        if not order_ids:
+            return False
+        try:
+            from datetime import date
+            reply = QMessageBox.question(
+                self, "Mark Delivered",
+                f"Mark {len(order_ids)} order(s) as delivered (today)?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return False
+            today = date.today().isoformat()
+            conn = sqlite3.connect(self.orders_db_path)
+            cursor = conn.cursor()
+            success_count = 0
+            for order_id in order_ids:
+                try:
+                    cursor.execute(
+                        "UPDATE orders SET delivery_date = ? WHERE id = ? AND (delivery_date IS NULL OR delivery_date = '')",
+                        (today, int(order_id))
+                    )
+                    if cursor.rowcount > 0:
+                        success_count += 1
+                except Exception:
+                    pass
+            conn.commit()
+            conn.close()
+            self.load_orders()
+            QMessageBox.information(self, "Bulk Mark Delivered", f"Marked {success_count}/{len(order_ids)} order(s) as delivered.")
+            return bool(success_count)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to bulk mark delivered:\n\n{e}")
+            return False
+
+    def _bulk_mark_billed(self, order_ids: list[int]) -> bool:
+        """Mark multiple checked orders as paid."""
+        if not order_ids:
+            return False
+        try:
+            from datetime import date
+            reply = QMessageBox.question(
+                self, "Mark Billed/Paid",
+                f"Mark {len(order_ids)} order(s) as paid (today)?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return False
+            today = date.today().isoformat()
+            conn = sqlite3.connect(self.orders_db_path)
+            cursor = conn.cursor()
+            success_count = 0
+            for order_id in order_ids:
+                try:
+                    cursor.execute(
+                        "UPDATE orders SET paid = 1, paid_date = ? WHERE id = ?",
+                        (today, int(order_id))
+                    )
+                    if cursor.rowcount > 0:
+                        success_count += 1
+                except Exception:
+                    pass
+            conn.commit()
+            conn.close()
+            self.load_orders()
+            QMessageBox.information(self, "Bulk Mark Paid", f"Marked {success_count}/{len(order_ids)} order(s) as paid.")
+            return bool(success_count)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to bulk mark paid:\n\n{e}")
+            return False
+
+    def _bulk_delete_orders(self, order_ids: list[int]) -> bool:
+        """Delete multiple checked orders with confirmation."""
+        if not order_ids:
+            return False
+        try:
+            reply = QMessageBox.warning(
+                self, "Bulk Delete Orders",
+                f"Permanently delete {len(order_ids)} order(s)? This cannot be undone.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return False
+            conn = sqlite3.connect(self.orders_db_path)
+            cursor = conn.cursor()
+            success_count = 0
+            for order_id in order_ids:
+                try:
+                    cursor.execute("DELETE FROM orders WHERE id = ?", (int(order_id),))
+                    cursor.execute("DELETE FROM order_items WHERE order_id = ?", (int(order_id),))
+                    if cursor.rowcount > 0:
+                        success_count += 1
+                except Exception:
+                    pass
+            conn.commit()
+            conn.close()
+            self.load_orders()
+            QMessageBox.information(self, "Bulk Delete Complete", f"Deleted {success_count}/{len(order_ids)} order(s).")
+            return bool(success_count)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to bulk delete:\n\n{e}")
+            return False
+
     def batch_print_delivery_tickets(self):
         """Print ONE combined delivery-ticket PDF for every checked order."""
         order_ids = self._checked_order_ids()
@@ -41884,7 +42362,11 @@ class PDFViewer(QMainWindow):
             )
 
     def batch_mark_delivered(self):
-        """Mark multiple selected orders as delivered with today's date."""
+        """Mark selected orders or all checked orders as delivered with today's date."""
+        checked_order_ids = self._checked_order_ids() if hasattr(self, "_checked_order_ids") else []
+        if len(checked_order_ids) > 1:
+            self._bulk_mark_delivered(checked_order_ids)
+            return
         selected_rows = self.orders_table.selectionModel().selectedRows()
         if not selected_rows:
             QMessageBox.warning(self, "No Selection", "Please select one or more orders first.\n\nTip: Hold Ctrl and click to select multiple orders.")
@@ -41945,7 +42427,11 @@ class PDFViewer(QMainWindow):
             print(f"Batch delivered error: {e}")
 
     def batch_mark_billed(self):
-        """Mark multiple selected orders as billed/paid with today's date."""
+        """Mark selected orders or all checked orders as billed/paid with today's date."""
+        checked_order_ids = self._checked_order_ids() if hasattr(self, "_checked_order_ids") else []
+        if len(checked_order_ids) > 1:
+            self._bulk_mark_billed(checked_order_ids)
+            return
         selected_rows = self.orders_table.selectionModel().selectedRows()
         if not selected_rows:
             QMessageBox.warning(self, "No Selection", "Please select one or more orders first.\n\nTip: Hold Ctrl and click to select multiple orders.")
@@ -42570,7 +43056,11 @@ class FeeScheduleDialog(QDialog):
                 print("New Order dialog error:\n", detail)
     
     def delete_order(self):
-        """Delete selected order from the orders table."""
+        """Delete selected order or all checked orders from the orders table."""
+        checked_order_ids = self._checked_order_ids() if hasattr(self, "_checked_order_ids") else []
+        if len(checked_order_ids) > 1:
+            self._bulk_delete_orders(checked_order_ids)
+            return
         current_row = self.orders_table.currentRow()
         if current_row < 0:
             QMessageBox.warning(self, "No Selection", "Please select an order to delete.")
@@ -42656,7 +43146,11 @@ class FeeScheduleDialog(QDialog):
                 print(f"Order deletion error: {e}")
 
     def clear_delivery_date(self):
-        """Clear the delivery date for the selected order (set to NULL)."""
+        """Clear delivery date for the selected order or all checked orders if multiple are selected (set to NULL)."""
+        checked_order_ids = self._checked_order_ids() if hasattr(self, "_checked_order_ids") else []
+        if len(checked_order_ids) > 1:
+            self._bulk_clear_delivery(checked_order_ids)
+            return
         current_row = self.orders_table.currentRow()
         if current_row < 0:
             QMessageBox.warning(self, "No Selection", "Please select an order first.")
@@ -42696,7 +43190,11 @@ class FeeScheduleDialog(QDialog):
             print(f"Clear delivery date error: {e}")
     
     def update_order_status(self):
-        """Wrapper to keep existing signal wiring while using the shared logic."""
+        """Update status for single selected order or all checked orders if multiple are selected."""
+        checked_order_ids = self._checked_order_ids() if hasattr(self, "_checked_order_ids") else []
+        if len(checked_order_ids) > 1:
+            self._bulk_update_status(checked_order_ids)
+            return
         self._update_order_status_impl()
 
     def check_scheduled_holds(self):
@@ -43174,6 +43672,11 @@ class FeeScheduleDialog(QDialog):
         try:
             from dmelogic.refill_service import process_refill, RefillError
 
+            checked_order_ids = self._checked_order_ids() if hasattr(self, "_checked_order_ids") else []
+            if len(checked_order_ids) > 1:
+                self._process_checked_refills(checked_order_ids)
+                return
+
             row = self.orders_table.currentRow()
             if row < 0:
                 QMessageBox.warning(self, "No Selection", "Please select an order to process a refill.")
@@ -43192,7 +43695,10 @@ class FeeScheduleDialog(QDialog):
 
             folder_path = getattr(self, "folder_path", None)
             try:
-                new_order = process_refill(int(chosen_order_id), folder_path=folder_path)
+                from dmelogic.order_rules import run_refill_with_override
+                new_order = run_refill_with_override(self, chosen_order_id, folder_path=folder_path)
+                if new_order is None:
+                    return  # user declined the Max-Units / incompatible-item override
             except RefillError as e:
                 # Check if the originally selected order OR the chosen order has RX on file
                 rx_on_file = False
@@ -45241,6 +45747,34 @@ class FeeScheduleDialog(QDialog):
     def closeEvent(self, event):
         """Handle main window close - clean up resources."""
         try:
+            # Stop auto-backup scheduler and any in-flight backup worker thread.
+            try:
+                if hasattr(self, 'auto_backup_scheduler') and self.auto_backup_scheduler:
+                    self.auto_backup_scheduler.stop()
+                    self.auto_backup_scheduler = None
+            except Exception:
+                pass
+
+            try:
+                if hasattr(self, '_pending_auto_backup_types'):
+                    self._pending_auto_backup_types = []
+                threads = list(getattr(self, '_auto_backup_threads', []) or [])
+                current_thread = getattr(self, '_auto_backup_thread', None)
+                if current_thread is not None and current_thread not in threads:
+                    threads.append(current_thread)
+                for t in threads:
+                    try:
+                        if t is not None and t.isRunning():
+                            t.quit()
+                            t.wait(3000)
+                    except Exception:
+                        pass
+                self._auto_backup_threads = []
+                self._auto_backup_thread = None
+                self._auto_backup_worker = None
+            except Exception:
+                pass
+
             # Stop message notifier
             if hasattr(self, '_message_notifier') and self._message_notifier:
                 self._message_notifier.stop()

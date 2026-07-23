@@ -44,7 +44,9 @@ hiddenimports += collect_submodules("dmelogic")
 hiddenimports += ["pytesseract", "fitz", "argon2", "qrcode", "openpyxl", "reportlab"]
 # Nova optional deps — harmless to include; the Nova-less build can exclude them.
 hiddenimports += collect_submodules("fastapi") + collect_submodules("uvicorn")
-
+# Starlette parses multipart/form-data (phone Rx upload) via python-multipart,
+# which it imports lazily as `multipart` — PyInstaller can't see it statically.
+hiddenimports += ["multipart", "python_multipart"]
 a = Analysis(
     [str(SRC / "dmelogic" / "app.py")],
     pathex=[str(SRC)],
@@ -73,7 +75,7 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,                       # GUI app — no console window
-    icon=str(ROOT / "assets" / "Nova Icon.ico"),
+    icon=str(ROOT / "assets" / "DMELogic Icon.ico"),
 )
 
 coll = COLLECT(

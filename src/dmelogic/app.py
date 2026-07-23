@@ -69,6 +69,90 @@ def _ensure_venv() -> None:
         print(f"[_ensure_venv] Failed to re-exec under venv: {e}", file=sys.stderr)
 
 
+_MODE_DMELOGIC_API = "--run-dmelogic-api"
+_MODE_NOVA_UI = "--run-nova-ui-server"
+
+
+def _consume_argv_flag(flag: str) -> bool:
+    """Remove and return whether a flag exists in argv."""
+    found = False
+    while flag in sys.argv:
+        sys.argv.remove(flag)
+        found = True
+    return found
+
+
+def _load_data_root_env() -> None:
+    """Load data-root .env so background service modes get runtime secrets."""
+    try:
+        from dmelogic.config import data_root
+        env_path = data_root() / ".env"
+    except Exception:
+        return
+    if not env_path.is_file():
+        return
+    try:
+        for raw in env_path.read_text(encoding="utf-8-sig").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            if key.lower().startswith("export "):
+                key = key[len("export "):].strip()
+            if not key or key in os.environ:
+                continue
+            os.environ[key] = value.strip().strip('"').strip("'")
+    except Exception:
+        # Service mode should still start even if env parsing fails.
+        pass
+
+
+def _run_service_mode_if_requested() -> bool:
+    """Run API/UI host mode when launched with dedicated service flags."""
+    run_api = _consume_argv_flag(_MODE_DMELOGIC_API)
+    run_ui = _consume_argv_flag(_MODE_NOVA_UI)
+    if not run_api and not run_ui:
+        return False
+
+    _load_data_root_env()
+
+    if run_api:
+        import logging
+        import uvicorn
+        from dmelogic import dmelogic_api as api_mod
+
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
+        )
+        api_mod.log.info("DMELogic API v2.0 starting on %s:%s", api_mod.API_HOST, api_mod.API_PORT)
+        api_mod.log.info("DB folder: %s", api_mod.FOLDER_PATH)
+        api_mod.log.info("Docs: http://%s:%s/docs", api_mod.API_HOST, api_mod.API_PORT)
+        uvicorn.run(
+            api_mod.app,
+            host=api_mod.API_HOST,
+            port=api_mod.API_PORT,
+            reload=False,
+        )
+        return True
+
+    if run_ui:
+        import logging
+        import uvicorn
+        from dmelogic import nova_ui_server as ui_mod
+
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
+        )
+        logging.getLogger("nova_ui").info("Nova UI starting at http://127.0.0.1:8401")
+        uvicorn.run(ui_mod.app, host="127.0.0.1", port=8401, reload=False)
+        return True
+
+    return False
+
+
 # ── Helper UI functions ────────────────────────────────────────────────
 # These have all-local imports so they're safe to define before _ensure_venv.
 
@@ -364,6 +448,10 @@ def _install_agent_ui_command_bridge(win) -> None:
 
 def main() -> int:
     _ensure_venv()
+
+    # Headless service modes for frozen installs (API/UI hosts).
+    if _run_service_mode_if_requested():
+        return 0
 
     project_root = Path(__file__).resolve().parent
 

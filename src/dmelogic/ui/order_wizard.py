@@ -48,6 +48,11 @@ from dmelogic.fee_schedule_enhancements import (
     validate_qty_vs_max,
     DbFeeScheduleReader,
 )
+from dmelogic.place_of_service import (
+    place_of_service_code,
+    place_of_service_label,
+    place_of_service_labels,
+)
 
 
 class LinkOrdersDialog(QDialog):
@@ -225,6 +230,8 @@ class OrderWizardResult:
 
     delivery_date: str = ""
     billing_type: str = ""
+    # Place of Service for claim billing: "11" Office, "12" Home (default).
+    place_of_service: str = "12"
     notes: str = ""
 
     # NEW: patient identifier for persistence
@@ -464,6 +471,11 @@ class OrderWizard(QDialog):
 
         self._set_date_edit_from_value(self.delivery_date_edit, order.get("delivery_date"))
         self._set_combo_text(self.billing_type_combo, order.get("billing_selection"))
+        if hasattr(self, "place_of_service_combo"):
+            self._set_combo_text(
+                self.place_of_service_combo,
+                place_of_service_label(order.get("place_of_service")),
+            )
         notes = self._clean_resume_text(order.get("notes"))
         notes = notes.replace(INCOMPLETE_ORDER_DRAFT_NOTE, "")
         self.notes_edit.setPlainText("\n".join(line.rstrip() for line in notes.splitlines()).strip())
@@ -2123,6 +2135,13 @@ class OrderWizard(QDialog):
             ["Insurance", "Cash", "Medicare", "Medicaid", "Private", "Other"]
         )
 
+        # Place of Service — required on the claim (ePACES/Alfred reads this).
+        self.place_of_service_combo = QComboBox()
+        self.place_of_service_combo.addItems(place_of_service_labels())
+        self.place_of_service_combo.setToolTip(
+            "Billing Place of Service for the claim: 11 = Office, 12 = Home."
+        )
+
         self.notes_edit = QTextEdit()
         self.notes_edit.setPlaceholderText("Optional internal notes / special instructions.")
 
@@ -2133,6 +2152,7 @@ class OrderWizard(QDialog):
         form.addRow("Delivery date:", self.delivery_date_edit)
         form.addRow("Insurance:", self.review_insurance_combo)
         form.addRow("Billing type:", self.billing_type_combo)
+        form.addRow("Place of Service:", self.place_of_service_combo)
         form.addRow("Notes:", self.notes_edit)
         form.addRow("", self.on_hold_checkbox)
 
@@ -2405,6 +2425,9 @@ class OrderWizard(QDialog):
             else "",
             delivery_date=delivery_text,
             billing_type=self.billing_type_combo.currentText() if hasattr(self, "billing_type_combo") else "",
+            place_of_service=place_of_service_code(
+                self.place_of_service_combo.currentText()
+            ) if hasattr(self, "place_of_service_combo") else "12",
             notes=self.notes_edit.toPlainText().strip() if hasattr(self, "notes_edit") else "",
             patient_id=self.patient_id,
             insurance_name=insurance_name,
@@ -2487,6 +2510,25 @@ class OrderWizard(QDialog):
         if not items:
             QMessageBox.warning(self, "Order", "Add at least one item to the order.")
             return
+
+        # Enforce Max-Units limits and incompatible-item combinations.
+        # Over-limit quantities and conflicting codes (e.g. A4554 with T4537/
+        # T4540) are soft-blocked: the user must correct them or override.
+        try:
+            from dmelogic.order_rules import evaluate_items, confirm_item_rule_issues
+            rule_items = [(it.hcpcs, it.quantity, it.description) for it in items]
+            report = evaluate_items(rule_items, self._fee_reader)
+            if report.has_issues:
+                if not confirm_item_rule_issues(self, report, context="order"):
+                    # Jump back to the Items step so the user can fix it.
+                    try:
+                        self.stack.setCurrentIndex(2)
+                        self._update_buttons()
+                    except Exception:
+                        pass
+                    return
+        except Exception as e:
+            print(f"[order_rules] wizard check skipped: {e}")
 
         # Validate document attachment requirement
         has_attachments = bool(self._attachment_paths)

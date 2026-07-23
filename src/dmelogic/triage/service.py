@@ -10,6 +10,7 @@ state change is auto-logged to the document's timeline.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -249,6 +250,8 @@ class TriageService:
                 f"again.\n\n(Details: {last_err})"
             )
 
+            self._relocate_trim_backup(doc, dst)
+
         doc.filename = dst.name
         doc.current_path = str(dst)
         self.store.update_document(doc)
@@ -274,6 +277,7 @@ class TriageService:
             logger.warning("Move failed %s -> %s: %s", src, dst, e)
             return doc
         # Remember where it came from so the move can be undone.
+        self._relocate_trim_backup(doc, dst)
         doc.previous_path = str(src)
         doc.previous_bucket_id = doc.bucket_id
         doc.current_path = str(dst)
@@ -309,6 +313,7 @@ class TriageService:
         except OSError as e:
             logger.warning("Delete (move to Trash) failed: %s", e)
             return doc
+        self._clear_trim_backup(doc)
         doc.current_path = str(dst)
         doc.dismissed = True
         doc.bucket_id = None
@@ -331,6 +336,7 @@ class TriageService:
         except OSError as e:
             logger.warning("Undo move failed: %s", e)
             return doc
+        self._relocate_trim_backup(doc, dst)
         restored_bucket = doc.previous_bucket_id
         detail = ""
         if restored_bucket is not None:
@@ -372,6 +378,7 @@ class TriageService:
         except OSError as e:
             logger.warning("Reopen move failed: %s", e)
             return doc
+        self._relocate_trim_backup(doc, dst)
         doc.current_path = str(dst)
         doc.filename = dst.name
         doc.bucket_id = None
@@ -379,6 +386,150 @@ class TriageService:
         self.store.update_document(doc)
         self.store.add_event(doc.id, EventType.REOPENED, user=_current_user())
         return doc
+
+    def trim_document(self, doc: Document, crop_box: tuple[float, float, float, float],
+                      *, page_index: int = 0) -> Document:
+        """Persist a manual crop selection onto an image or a single PDF page."""
+        src = Path(doc.current_path)
+        if not src.exists():
+            raise FileNotFoundError(
+                f"The file '{src.name}' is no longer available. Refresh New Rx and try again."
+            )
+
+        x0, y0, x1, y1 = (float(v) for v in crop_box)
+        if x1 <= x0 or y1 <= y0:
+            raise ValueError("Drag a non-empty trim box before applying trim.")
+
+        self._save_trim_backup(doc)
+
+        suffix = src.suffix.lower()
+        if suffix == ".pdf":
+            detail = self._trim_pdf(src, page_index, (x0, y0, x1, y1))
+        elif suffix in _VIEWABLE_SUFFIXES:
+            detail = self._trim_image(src, (x0, y0, x1, y1))
+        else:
+            raise ValueError("This file type cannot be trimmed in New Rx.")
+
+        self.store.update_document(doc)
+        self.store.add_event(doc.id, EventType.TRIMMED, detail, _current_user())
+        return doc
+
+    def undo_trim(self, doc: Document) -> Document:
+        backup = Path(doc.trim_backup_path or "")
+        current = Path(doc.current_path)
+        if not doc.trim_backup_path or not backup.exists():
+            raise ValueError("Nothing to undo for this trim.")
+        current.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(str(backup), str(current))
+        doc.trim_backup_path = None
+        self.store.update_document(doc)
+        self.store.add_event(doc.id, EventType.UNTRIMMED, user=_current_user())
+        return doc
+
+    @staticmethod
+    def _trim_image(path: Path, crop_box: tuple[float, float, float, float]) -> str:
+        from PIL import Image
+
+        with Image.open(path) as image:
+            width, height = image.size
+            x0, y0, x1, y1 = TriageService._clamp_crop_box(crop_box, width, height)
+            trimmed = image.crop((x0, y0, x1, y1))
+            save_kwargs: dict[str, object] = {}
+            if "dpi" in image.info:
+                save_kwargs["dpi"] = image.info["dpi"]
+            if "icc_profile" in image.info:
+                save_kwargs["icc_profile"] = image.info["icc_profile"]
+            if image.format == "JPEG" and trimmed.mode not in ("RGB", "L"):
+                trimmed = trimmed.convert("RGB")
+            fmt = image.format or path.suffix.lstrip(".").upper()
+            trimmed.save(path, format=fmt, **save_kwargs)
+
+        return f"image to {x1 - x0}×{y1 - y0}px"
+
+    @staticmethod
+    def _trim_pdf(path: Path, page_index: int,
+                  crop_box: tuple[float, float, float, float]) -> str:
+        import fitz
+
+        pdf = fitz.open(str(path))
+        tmp_path = path.with_name(f"{path.stem}.trimmed{path.suffix}")
+        try:
+            if page_index < 0 or page_index >= pdf.page_count:
+                raise ValueError("Selected page is no longer available.")
+            page = pdf[page_index]
+            current = page.cropbox
+            x0, y0, x1, y1 = TriageService._clamp_crop_box(
+                crop_box,
+                current.width,
+                current.height,
+            )
+            page.set_cropbox(
+                fitz.Rect(
+                    current.x0 + x0,
+                    current.y0 + y0,
+                    current.x0 + x1,
+                    current.y0 + y1,
+                )
+            )
+            pdf.save(str(tmp_path))
+        finally:
+            pdf.close()
+
+        tmp_path.replace(path)
+
+        return f"page {page_index + 1} to {int(round(x1 - x0))}×{int(round(y1 - y0))}pt"
+
+    def _save_trim_backup(self, doc: Document) -> None:
+        src = Path(doc.current_path)
+        backup = self._trim_backup_target(src)
+        self._clear_trim_backup(doc)
+        shutil.copy2(str(src), str(backup))
+        doc.trim_backup_path = str(backup)
+
+    def _relocate_trim_backup(self, doc: Document, new_current_path: Path) -> None:
+        if not doc.trim_backup_path:
+            return
+        backup = Path(doc.trim_backup_path)
+        if not backup.exists():
+            doc.trim_backup_path = None
+            return
+        target = self._trim_backup_target(Path(new_current_path))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if backup == target:
+            return
+        if target.exists():
+            target.unlink()
+        backup.replace(target)
+        doc.trim_backup_path = str(target)
+
+    def _clear_trim_backup(self, doc: Document) -> None:
+        if not doc.trim_backup_path:
+            return
+        backup = Path(doc.trim_backup_path)
+        try:
+            if backup.exists():
+                backup.unlink()
+        except OSError:
+            pass
+        doc.trim_backup_path = None
+
+    @staticmethod
+    def _trim_backup_target(path: Path) -> Path:
+        return path.with_name(f"{path.stem}.trim-backup{path.suffix}")
+
+    @staticmethod
+    def _clamp_crop_box(crop_box: tuple[float, float, float, float],
+                        width: float, height: float) -> tuple[int, int, int, int]:
+        x0, y0, x1, y1 = crop_box
+        max_width = max(1, int(round(width)))
+        max_height = max(1, int(round(height)))
+        x0 = max(0, min(int(round(x0)), max_width - 1))
+        y0 = max(0, min(int(round(y0)), max_height - 1))
+        x1 = max(x0 + 1, min(int(round(x1)), max_width))
+        y1 = max(y0 + 1, min(int(round(y1)), max_height))
+        if x1 - x0 < 2 or y1 - y0 < 2:
+            raise ValueError("Trim selection is too small.")
+        return x0, y0, x1, y1
 
     # ── notes & history ─────────────────────────────────────────────────
     def add_note(self, doc: Document, text: str) -> None:

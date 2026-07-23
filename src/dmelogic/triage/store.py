@@ -84,6 +84,7 @@ class TriageStore:
                     dismissed INTEGER DEFAULT 0,
                     previous_path TEXT,
                     previous_bucket_id INTEGER,
+                    trim_backup_path TEXT,
                     ocr_text TEXT,
                     ocr_done INTEGER DEFAULT 0,
                     ocr_quality TEXT,
@@ -111,6 +112,7 @@ class TriageStore:
                 ("documents", "dismissed", "ALTER TABLE documents ADD COLUMN dismissed INTEGER DEFAULT 0"),
                 ("documents", "previous_path", "ALTER TABLE documents ADD COLUMN previous_path TEXT"),
                 ("documents", "previous_bucket_id", "ALTER TABLE documents ADD COLUMN previous_bucket_id INTEGER"),
+                ("documents", "trim_backup_path", "ALTER TABLE documents ADD COLUMN trim_backup_path TEXT"),
                 ("documents", "ocr_text", "ALTER TABLE documents ADD COLUMN ocr_text TEXT"),
                 ("documents", "ocr_done", "ALTER TABLE documents ADD COLUMN ocr_done INTEGER DEFAULT 0"),
                 ("documents", "ocr_quality", "ALTER TABLE documents ADD COLUMN ocr_quality TEXT"),
@@ -220,6 +222,7 @@ class TriageStore:
             dismissed=bool(r["dismissed"]) if "dismissed" in keys else False,
             previous_path=r["previous_path"] if "previous_path" in keys else None,
             previous_bucket_id=r["previous_bucket_id"] if "previous_bucket_id" in keys else None,
+            trim_backup_path=r["trim_backup_path"] if "trim_backup_path" in keys else None,
             ocr_done=bool(r["ocr_done"]) if "ocr_done" in keys else False,
             ocr_quality=(r["ocr_quality"] or "") if "ocr_quality" in keys else "",
             detected_name=(r["detected_name"] or "") if "detected_name" in keys else "",
@@ -281,10 +284,10 @@ class TriageStore:
             conn.execute(
                 "UPDATE documents SET filename=?, current_path=?, bucket_id=?, status=?, "
                 "patient_id=?, order_id=?, dismissed=?, previous_path=?, "
-                "previous_bucket_id=?, updated_at=? WHERE id=?",
+                 "previous_bucket_id=?, trim_backup_path=?, updated_at=? WHERE id=?",
                 (doc.filename, str(doc.current_path), doc.bucket_id, doc.status,
                  doc.patient_id, doc.order_id, int(doc.dismissed), doc.previous_path,
-                 doc.previous_bucket_id, _now(), doc.id),
+                  doc.previous_bucket_id, doc.trim_backup_path, _now(), doc.id),
             )
             conn.commit()
 

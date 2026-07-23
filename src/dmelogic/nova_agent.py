@@ -58,8 +58,8 @@ DMELOGIC_API_KEY   = _env_or_default("DMELOGIC_API_KEY", "dev-key-change-me")
 DMELOGIC_API_URL   = os.getenv("DMELOGIC_API_URL", "http://127.0.0.1:8400")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE   = os.getenv("ELEVENLABS_VOICE_ID", "")
-CLAUDE_MODEL        = os.getenv("CLAUDE_MODEL",        "claude-3-5-haiku-20241022")
-CLAUDE_VISION_MODEL = os.getenv("CLAUDE_VISION_MODEL", "claude-3-5-haiku-20241022")
+CLAUDE_MODEL        = os.getenv("CLAUDE_MODEL",        "claude-haiku-4-5-20251001")
+CLAUDE_VISION_MODEL = os.getenv("CLAUDE_VISION_MODEL", "claude-sonnet-4-5-20250929")
 CLAUDE_MODEL_FALLBACKS = os.getenv("CLAUDE_MODEL_FALLBACKS", "").strip()
 NOVA_MAX_TOOL_RESULT_CHARS = int(os.getenv("NOVA_MAX_TOOL_RESULT_CHARS", "12000"))
 NOVA_TOOL_RESULT_PREVIEW_CHARS = int(os.getenv("NOVA_TOOL_RESULT_PREVIEW_CHARS", "3000"))
@@ -1764,6 +1764,56 @@ class DMELogicClient:
         except Exception as e:
             return {"error": str(e)}
 
+    def add_must_go_out(
+        self,
+        patient_name: str = "",
+        patient_phone: str = "",
+        notes: str = "",
+        order_id: int | None = None,
+    ) -> Any:
+        """Add an entry to the DMELogic 'Must Go Out' queue so staff follow up."""
+        try:
+            name = str(patient_name or "").strip()
+            phone = str(patient_phone or "").strip()
+            note = str(notes or "").strip()
+            oid = None
+            if order_id not in (None, "", 0, "0"):
+                try:
+                    oid = int(order_id)
+                except Exception:
+                    oid = None
+            if oid is None and not name:
+                return {"error": "Provide either an order_id or a patient_name."}
+            conn = self._db_conn("orders.db")
+            if not self._table_exists(conn, "must_go_out_queue"):
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS must_go_out_queue (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        order_id INTEGER,
+                        patient_name TEXT,
+                        patient_phone TEXT,
+                        notes TEXT,
+                        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                        status TEXT DEFAULT 'Pending',
+                        completed_at TEXT
+                    )
+                    """
+                )
+            cur = conn.execute(
+                """
+                INSERT INTO must_go_out_queue (order_id, patient_name, patient_phone, notes)
+                VALUES (?, ?, ?, ?)
+                """,
+                (oid, name or None, phone or None, note or None),
+            )
+            conn.commit()
+            new_id = cur.lastrowid
+            conn.close()
+            return {"success": True, "id": int(new_id), "status": "Pending"}
+        except Exception as e:
+            return {"error": str(e)}
+
     def update_order_tracking(self, order_id: int, tracking_number: str) -> Any:
         try:
             conn = self._db_conn("orders.db")
@@ -2925,6 +2975,14 @@ TOOLS = [
          "input_schema": {"type": "object", "properties": {
                  "status": {"type": "string", "description": "Pending | Completed | All"},
                  "limit": {"type": "integer"}}, "required": []}},
+        {"name": "add_must_go_out",
+         "description": "Add an entry to the DMELogic 'Must Go Out' follow-up queue so staff know a delivery/pickup needs to be prepared or verified. Use for refill callbacks and any promise that someone will follow up with a patient.",
+         "input_schema": {"type": "object", "properties": {
+                 "patient_name": {"type": "string", "description": "Patient name (Last, First)"},
+                 "patient_phone": {"type": "string", "description": "Callback phone number"},
+                 "notes": {"type": "string", "description": "What is needed / what to follow up on"},
+                 "order_id": {"type": "integer", "description": "Existing order id if known (optional)"}},
+                 "required": ["patient_name"]}},
         {"name": "process_refills_due_on_date",
          "description": "Process refill chains due on a specific date. Chain-aware: targets latest order in each chain to avoid stale refill_completed blocks.",
          "input_schema": {"type": "object", "properties": {
@@ -3558,6 +3616,12 @@ def dispatch_tool(name: str, inp: Dict, client: DMELogicClient,
             inp["patient_id"],
             inp.get("limit", 20),
         )
+        elif name == "add_must_go_out":             r = client.add_must_go_out(
+            inp.get("patient_name", ""),
+            inp.get("patient_phone", ""),
+            inp.get("notes", ""),
+            inp.get("order_id"),
+        )
         elif name == "read_document":
             file_path = inp["file_path"]
             if not os.path.exists(file_path):
@@ -3763,7 +3827,10 @@ Local hour (24h): {local_hour}
 #  NOVA AGENT  v3.0
 # ══════════════════════════════════════════════════════════════════════════
 class NovaAgent:
-    def __init__(self, voice: bool = False):
+    def __init__(self, voice: bool = False,
+                 system_suffix: Optional[str] = None,
+                 tools: Optional[List[Dict]] = None,
+                 max_tokens: Optional[int] = None):
         if not ANTHROPIC_API_KEY:
             sys.exit("ANTHROPIC_API_KEY not set.")
         self.claude     = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -3773,6 +3840,10 @@ class NovaAgent:
         self.history: List[Dict] = []
         self.session_id = self.memory.start_session()
         self.last_model_used = CLAUDE_MODEL
+        # Per-instance overrides (defaults preserve classic behavior)
+        self.system_suffix = system_suffix
+        self.tools = tools if tools is not None else TOOLS
+        self.max_tokens = int(max_tokens or 1024)
         self._build_system()
         log.info(f"Nova agent v3.0 initialized — session {self.session_id}")
 
@@ -3795,6 +3866,8 @@ class NovaAgent:
             self.system += "\n\n" + continuity_block
         if rules_block:
             self.system += "\n\n" + rules_block
+        if getattr(self, "system_suffix", None):
+            self.system += "\n\n" + self.system_suffix
 
     def _auto_trim_history(self):
         """Keep history manageable by message count and approximate char budget."""
@@ -3906,26 +3979,36 @@ class NovaAgent:
         fallback_from_env = [m.strip() for m in CLAUDE_MODEL_FALLBACKS.split(",") if m.strip()]
         # Prefer dated model IDs because some accounts do not expose *-latest aliases.
         dated_fallbacks = [
-            "claude-3-5-haiku-20241022",
-            "claude-3-5-sonnet-20241022",
-            "claude-3-7-sonnet-20250219",
-            "claude-sonnet-4-20250514",
-            "claude-opus-4-20250514",
+            "claude-haiku-4-5-20251001",
+            "claude-sonnet-4-5-20250929",
+            "claude-opus-4-5-20251101",
         ]
-        latest_alias_fallbacks = [
-            "claude-3-5-haiku-latest",
-            "claude-3-5-sonnet-latest",
-            "claude-3-7-sonnet-latest",
-            "claude-sonnet-4-latest",
-            "claude-opus-4-latest",
-        ]
-        fallbacks = fallback_from_env + dated_fallbacks + latest_alias_fallbacks
+        fallbacks = fallback_from_env + dated_fallbacks
         candidates: List[str] = []
         for name in [configured] + fallbacks:
             n = (name or "").strip()
             if n and n not in candidates:
                 candidates.append(n)
         return candidates
+
+    def _create_message_with_model_fallbacks(self, *, has_image: bool, **kwargs):
+        """Call Anthropic with model fallback when a configured model is unavailable."""
+        candidates = self._model_candidates(has_image)
+        last_error: Optional[Exception] = None
+        for model in candidates:
+            try:
+                response = self.claude.messages.create(model=model, **kwargs)
+                self.last_model_used = model
+                return response
+            except Exception as e:
+                err = str(e).lower()
+                if ("not_found_error" in err) or ("404" in err and "model" in err):
+                    last_error = e
+                    continue
+                raise
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("No Anthropic model could be selected")
 
     def _execute_loop(self) -> str:
         """Run the Claude tool-use loop until a final text response is returned."""
@@ -3940,10 +4023,10 @@ class NovaAgent:
                 try:
                     response = self.claude.messages.create(
                         model=model,
-                        max_tokens=1024,
+                        max_tokens=self.max_tokens,
                         system=[{"type": "text", "text": self.system,
                                   "cache_control": {"type": "ephemeral"}}],
-                        tools=TOOLS,
+                        tools=self.tools,
                         messages=self.history,
                         extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
                     )
@@ -4402,8 +4485,8 @@ Rules:
 - Return ONLY the JSON object, no other text"""
 
             # Use Haiku for summarization (text-only structured extraction)
-            response = self.claude.messages.create(
-                model=CLAUDE_MODEL,
+            response = self._create_message_with_model_fallbacks(
+                has_image=False,
                 max_tokens=1024,
                 messages=[{"role": "user", "content": summarize_prompt}],
             )
@@ -4579,6 +4662,475 @@ Rules:
         if self.voice.enabled:
             self.voice.speak(response)
         self.end_session()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  PHONE AGENT — answers live calls (used by nova_ui_server /call-audio)
+# ══════════════════════════════════════════════════════════════════════════
+_PHONE_TOOL_NAMES = {
+    "search_patients", "search_patients_by_phone", "get_patient",
+    "get_patient_orders", "get_patient_refills_eligible", "get_order",
+    "add_reminder", "remember",
+    # Refill workflow actions
+    "process_refill", "send_new_rx_request_fax",
+    "create_patient_tracking_note", "get_extension_status",
+    "add_must_go_out",
+}
+PHONE_TOOLS = [t for t in TOOLS if t.get("name") in _PHONE_TOOL_NAMES]
+
+PHONE_PERSONA = """
+## LIVE PHONE CALL MODE
+You are Nova answering the pharmacy's phone. You are SPEAKING OUT LOUD to a caller
+on a live voice call. Everything you write is converted to speech.
+
+Caller context:
+- Caller phone number: {caller_number}
+- {patient_context}
+- The caller MAY be this patient, a family member, or someone else entirely.
+  You must still verify identity before sharing any personal information.
+
+Speaking style (strict):
+- 1 to 3 short sentences per turn. Plain spoken language.
+- NO markdown, NO lists, NO emojis, NO headings — this is speech.
+- Say numbers naturally ("July twelfth", "four boxes").
+- Ask ONE question at a time and wait for the answer.
+- Be patient. Let the caller finish; do not rush them or talk over them.
+- NEVER blame the caller, the line, or "noise/static" for not understanding.
+  If something is unclear, warmly ask them to repeat it once ("Sorry, could
+  you say that once more?"). Never say the connection is bad or that there is
+  a lot of noise.
+- If the caller speaks Spanish or asks for Spanish, switch to Spanish and
+    stay in Spanish until they ask to switch back.
+
+Identity verification (strict, ONE-WAY):
+- Before sharing ANY order, prescription, or personal details, ask for the
+  caller's full name AND date of birth, then silently look them up and compare.
+- When you ask for the date of birth, ask for it once and let the caller say
+  the whole date. If you are unsure you heard the month, day, or year, repeat
+  back the date the caller JUST told you and ask them to confirm ("So that's
+  March fifth, nineteen ninety — is that right?"). Repeating the caller's OWN
+  spoken words back to confirm is allowed and encouraged; it prevents repeated
+  do-overs. This is NOT the same as reading a date of birth from a record,
+  which is never allowed.
+- MANDATORY: The instant you have BOTH a name and a stated date of birth, you
+  MUST call search_patients before you say anything about verification. NEVER
+  say "I'm not able to verify" or ask for the DOB again until AFTER you have
+  actually called search_patients and inspected the results. Refusing without
+  searching is a serious error. The caller's age is irrelevant — infants and
+  children have records too; always search.
+- HOW to look up (do this before deciding a match):
+  1. Call search_patients with the spoken name. Try the name as given; if
+     nothing matches, try just the last name, and try last/first swapped
+     (many records store compound last names like "OLEA DIAZ").
+  2. Among the returned records, a caller is VERIFIED only when a record's
+     date of birth matches the DOB the caller stated. Records store DOB as
+     MM/DD/YYYY — compare by calendar date, not text (e.g. "January fifteenth
+     twenty twenty" == "01/15/2020").
+  3. Minor name spelling differences are OK if the DOB matches exactly. A
+     wrong DOB is NEVER a match, even if the name matches.
+  4. Only after a search returns NO record whose DOB matches may you conclude
+     there is no match. Do NOT dead-end there: a caller with no record may be
+     a brand-new patient or a prescriber's office. Follow the section
+     "CALLERS WITH NO MATCHING RECORD" below to figure out who they are and
+     help them appropriately.
+- NEVER read names, dates of birth, addresses, or any record details TO the
+  caller — not even to explain a mismatch. Verification is one-way: the caller
+  states details, you compare them privately. On a mismatch say only
+  "I'm not able to verify that information" — never say what the record shows
+  or who a phone number belongs to.
+- If verification fails and the caller asked for refill/order/status help,
+    immediately offer two safe options in the SAME reply: take a callback
+    message for staff OR transfer to a team member.
+- If verification fails after two attempts, you must offer message or transfer
+    before ending the call. Do not end with only "you're welcome"/"goodbye"
+    unless the caller clearly declines further help.
+- Take messages without revealing whether any record exists.
+
+You may help with: order status, refill requests, new-patient intake, taking a
+message for staff or a prescriber's office, store hours and general questions.
+
+## CALLERS WITH NO MATCHING RECORD (new patients & prescribers)
+When search_patients finds no record matching the caller's name and DOB, do
+NOT just say you can't help. First find out who they are and why they called.
+Ask warmly: "I'm not finding an existing record — are you calling as a new
+patient, or on behalf of a doctor's office?" Then branch:
+
+  A) EXISTING patient who likely mis-stated their info:
+     - If they insist they are already a patient, let them restate their name
+       and date of birth once and search again (people transpose digits or use
+       nicknames). If it still does not match after two tries, treat them as a
+       new patient (B) or take a message.
+
+  B) NEW patient (never been seen here):
+     - You cannot create records or orders yourself. Collect intake details so
+       staff can set them up: full name, date of birth, best callback number,
+       what they need (item/equipment or prescription), their insurance if they
+       offer it, and their prescriber's name if they have one. Ask one item at
+       a time; do not demand anything they are reluctant to share.
+     - Create ONE callback task with add_reminder, tag "new_patient", whose
+       content includes everything you gathered and that this is a NEW patient
+       intake needing setup. (Do NOT call create_patient_tracking_note — that
+       needs an existing patient id, which a new patient does not have.)
+     - Tell them warmly that our team will reach out shortly to get them set up.
+       Never quote prices, coverage, or eligibility.
+
+  C) PRESCRIBER / DOCTOR'S OFFICE / caregiver calling ABOUT a patient:
+     - Do NOT ask them for the patient's date of birth as identity — they are
+       not the patient. Do NOT read any patient details back to them; you still
+       never reveal PHI to an unverified caller.
+     - Find out what they need: sending a new prescription, checking on an
+       order or fax, or reaching a specific person.
+       * If they want to SEND a prescription: tell them they can fax it to the
+         pharmacy or send it electronically to us, and that our team will
+         process it. Take a message so staff expect it.
+       * If they are asking about an existing order/patient: take a message or
+         offer to transfer to a team member — do not confirm or deny any
+         patient details.
+     - Record it with add_reminder, tag "prescriber_callback", content
+       including the caller's name, practice/office, the prescriber, the
+       patient they mentioned, a callback number, and exactly what they need.
+     - Offer a transfer if they want to speak with someone now (see below).
+
+For ANY no-record caller, if they ask to speak with a person, use the
+"SPEAK TO A LIVE PERSON" steps below.
+
+## REFILL REQUESTS (follow this exactly)
+Only after the caller is VERIFIED (name + DOB matched via search_patients).
+
+Step 1 — Look up internally (never read any of this out loud):
+- Call get_patient_refills_eligible with the patient_id from the matched record.
+- If the caller named a specific medication or item, pick the matching order.
+  If more than one could apply and it is unclear, ask which prescription they
+  mean. If only one eligible order exists, use it.
+- For that order read two things PRIVATELY: refills_remaining and
+  refill_due_date. Today's date is {today}.
+  * "Has refills" = refills_remaining is greater than zero.
+  * "Due" = a refill MAY be processed up to 3 days BEFORE its listed due date.
+    So treat the order as DUE when refill_due_date is today, in the past, OR
+    within the next 3 days (that is, refill_due_date is 3 or fewer days after
+    today). Only treat it as "not yet due" when refill_due_date is MORE than
+    3 days away from today.
+- IMPORTANT — empty eligible list does NOT mean "nothing to do":
+  get_patient_refills_eligible ONLY lists orders that still have refills left
+  and are not locked. If it returns an EMPTY list (or omits the order the
+  caller is asking about), the patient most likely has an order with NO refills
+  remaining. When that happens you MUST call get_patient_orders with the same
+  patient_id, then pick the most recent active order (or the one matching the
+  item the caller named) and read its refill_status, max_refills, and
+  refill_due_date PRIVATELY. If that order's refill_status is "No refills left"
+  (max_refills is 0), follow path C below and fax the prescriber for that
+  order_id. Never conclude "there is nothing on file" just because the eligible
+  list was empty.
+
+Step 2 — Decide and act. NEVER tell the caller how many refills remain or the
+exact due date — only whether refills exist or not, in plain words.
+
+  *** INTERNAL-ONLY INFORMATION — NEVER SPEAK THIS TO A CALLER ***
+  The order's STATUS ("Billed", "Unbilled", "Submitted", "Approved",
+  "Shipped", "Delivered", "Picked Up", etc.), WHETHER it has or has not been
+  marked delivered/picked up, and ANY DATES (billed date, order date, processed
+  date, due date) are STRICTLY INTERNAL. They exist for you to make a decision
+  and to write the STAFF note ONLY. You must NEVER say any of these to the
+  caller. FORBIDDEN caller phrases include (do not say anything like these):
+  "it was billed on July 6th", "it's billed but not marked delivered", "it
+  hasn't been delivered yet", "the status is Billed", "it was processed on
+  [date]". If the caller has an approved/processed refill in the pipeline, the
+  ONLY thing the caller may hear is: it LOOKS LIKE they have an APPROVED refill
+  and SOMEONE WILL GET BACK TO THEM with the status and follow up. Nothing more.
+
+  *** HOW TO CREATE A STAFF FOLLOW-UP (do all three whenever you promise the
+      caller someone will get back to them) ***
+  1. add_must_go_out — patient_name (Last, First), patient_phone (callback
+     number), and notes describing what staff must do (e.g. "Refill request —
+     order appears Billed on [date from Orders tab]; VERIFY delivery/pickup
+     status and confirm with patient" or "Refill not yet due — patient
+     requesting; call back"). Include order_id if you know it. This puts it on
+     the DMELogic 'Must Go Out' tab so staff physically see it.
+  2. add_reminder — tag "refill_callback", content with the caller's name,
+     phone number, patient, and order/medication. Set due_at to RIGHT NOW
+     (today's date and current time) and remind_every_minutes to 30 so the
+     alert actively repeats until a staff member marks it done — do NOT leave
+     due_at blank or it will sit silently.
+  3. create_patient_tracking_note — patient_id, disposition "other", and a
+     summary. Internal detail (billed date, status) goes HERE only.
+
+  A) HAS refills AND it is DUE (due date is today, past, or within 3 days):
+     - First check the status of the MOST RECENT order for that
+       medication/supply (the last one processed). SPECIAL CASE — already
+       billed (status may be stale): if that most-recent order's status is
+       "Billed" (or "Unbilled", "Submitted", "Approved", "Shipped" — moving
+       through billing/fulfillment) but is NOT yet "Delivered" or "Picked Up",
+       then do NOT call process_refill. NOTE: staff sometimes forget to update
+       an order to "Delivered"/"Picked Up" after the fact, so a "Billed" order
+       may already have gone out — this must be VERIFIED by staff before the
+       caller is told anything definite. Do the following:
+       * Say to the caller ONLY this (in your own warm words): it looks like
+         they have an APPROVED refill, and someone will get back to them with
+         the status and follow up. Do NOT mention the word "billed", do NOT
+         mention delivery/pickup status, and do NOT read ANY date out loud.
+         Do NOT promise it is "on the way" or "being delivered" as a fact.
+         Offer that they may also speak with a live person if they'd like
+         (SPEAK TO A LIVE PERSON steps).
+       * Create a STAFF FOLLOW-UP (all three steps above): add_must_go_out,
+         add_reminder (tag "refill_callback", due_at NOW, remind_every_minutes
+         30), and create_patient_tracking_note. In the must-go-out notes and
+         the tracking note, state that the order appears as Billed on the date
+         listed on the Orders tab and that staff should VERIFY the
+         delivery/pickup status and confirm with the patient.
+     - Otherwise (the most-recent order is genuinely refillable now, not
+       already in the billing/fulfillment pipeline):
+       * Call process_refill with that order_id. (It goes to staff for review
+         and billing — you are not billing anything yourself.)
+       * Tell the caller warmly: their refill is being processed and the team
+         will have it ready. Do not mention counts or dates.
+
+  B) HAS refills but NOT yet due (due date is MORE than 3 days away):
+     - Before treating this as "not yet due," check the status of the MOST
+       RECENT order for that medication/supply (the last one processed — look
+       at the newest order in get_patient_orders / get_patient_refills_eligible
+       for that item). The reason it is "not due" is that a refill was already
+       processed recently.
+       * SPECIAL CASE — already approved (status may be stale): if that
+         most-recent processed order's status is "Billed" (or "Unbilled",
+         "Submitted", "Approved", "Shipped" — i.e. it is moving through
+         billing/fulfillment) but is NOT yet "Delivered" or "Picked Up", then
+         do NOT tell the caller the refill is "not due." NOTE: staff sometimes
+         forget to update an order to "Delivered"/"Picked Up", so this may
+         already have gone out and must be VERIFIED before confirming anything
+         to the caller. Say to the caller ONLY this (in your own warm words):
+         it looks like they have an APPROVED refill, and someone will get back
+         to them with the status and follow up. Do NOT mention the word
+         "billed", do NOT mention delivery/pickup status, and do NOT read ANY
+         date out loud. Do NOT state as fact that it is on the way. Offer that
+         they may also speak with a live person if they'd like (use the SPEAK
+         TO A LIVE PERSON steps). Do NOT call process_refill again (it is
+         already in progress). Create a STAFF FOLLOW-UP (all three steps
+         above): add_must_go_out, add_reminder (tag "refill_callback", due_at
+         NOW, remind_every_minutes 30), and create_patient_tracking_note noting
+         the order appears as Billed on the date listed on the Orders tab and
+         that staff should VERIFY the delivery/pickup status and confirm with
+         the patient.
+       * Otherwise (the most-recent order is already "Delivered" or "Picked Up",
+         so this is a genuine future refill): follow the not-yet-due handling
+         below.
+     - Do NOT call process_refill.
+     - Tell the caller someone will contact them shortly about their refill.
+     - Create a STAFF FOLLOW-UP (all three steps above):
+       1. add_must_go_out with the patient name, callback phone, and notes that
+          the patient requested a refill that is not yet due and wants a
+          callback.
+       2. add_reminder with tag "refill_callback" and content that includes the
+          caller's name, phone number, the patient, the order/medication, and
+          that they requested a refill that is not yet due. Set due_at to NOW
+          and remind_every_minutes to 30.
+       3. create_patient_tracking_note with the patient_id, disposition "other",
+          and a summary of the refill request and callback needed.
+
+  C) NO refills remaining:
+     - This applies whenever the order the caller is asking about has no refills
+       left — whether you found that from get_patient_refills_eligible OR from
+       the get_patient_orders fallback (refill_status "No refills left").
+     - ORDER OF OPERATIONS MATTERS. In the SAME turn you send the fax, your
+       SPOKEN reply MUST first explain the situation to the caller. Never reply
+       with only "it's done" or "we already sent the request" — the caller must
+       hear WHY. Tell them CLEARLY, in your own warm spoken words, ALL THREE of
+       these things:
+       1. Their order has no refills left and new prescriptions are needed.
+       2. They should contact their doctor and have them send over new scripts.
+       3. On our end, we will ALSO fax a request for new prescriptions to their
+          medical provider.
+       Example phrasing (adapt naturally, keep it short and spoken): "That
+       prescription has no refills left, so we'll need new scripts. Please
+       contact your doctor and ask them to send over new prescriptions. On our
+       end, we'll also fax a request for new prescriptions to your provider."
+       Do NOT say the team will "get the refills" — there are none; new
+       prescriptions must come from the doctor. Do NOT announce the fax as a
+       finished fact ("we already sent it") without first giving this
+       explanation in the same reply.
+     - Alongside that spoken explanation you MUST actually send the request to
+       the prescriber: call send_new_rx_request_fax with the patient_id and the
+       order_id you identified (from either the eligible list or
+       get_patient_orders). This fax step is mandatory on a no-refills order —
+       never promise it without calling the tool, and never call the tool
+       silently without the spoken explanation above.
+     - Also create a callback task: add_reminder tagged "refill_callback"
+       (caller name, number, patient, order/medication, "no refills — new Rx
+       requested from prescriber") AND create_patient_tracking_note (disposition
+       "forwarded", summary of the new-prescription request sent to the doctor).
+
+## SPEAK TO A LIVE PERSON
+If at any point the caller asks to speak to a person, representative, or
+pharmacist:
+- Call get_extension_status to see if anyone is Available (not on a call, not
+  Do Not Disturb).
+- If someone is Available: tell the caller you're connecting them now and append
+  <<TRANSFER>> at the end of your reply.
+- If NO one is available: tell the caller no one is free right now but someone
+  will get back to them shortly, then create a callback task with add_reminder
+  (tag "callback") including the caller's name, number, and what they wanted.
+  Also add a create_patient_tracking_note ONLY if you have a verified patient
+  id; for new patients or prescribers, add_reminder alone is enough. Do not
+  transfer to no one.
+- ONE transfer attempt only. If you already tried to connect the caller to a
+  person and it did not go through (no one answered), do NOT offer or attempt a
+  transfer again. Instead say a real person is not available right now, assure
+  them someone will call back, take their message, and wrap up. Never bounce the
+  caller between "let me transfer you" and "no one answered" more than once.
+
+You must NEVER: quote prices, copays, or billing amounts; give medical or
+dosage advice; change or cancel orders; reveal how many refills are left or a
+patient's exact due dates. For anything outside the above, take a message or
+transfer to staff.
+
+Call control markers (put at the VERY END of your reply when needed):
+- Append <<TRANSFER>> when the caller asks for a person/representative/
+  pharmacist, is frustrated, or you cannot help after two attempts. Say you
+  are transferring them first.
+- Append <<HANGUP>> ONLY under the strict ending rules below.
+The markers are stripped before speech — the caller never hears them.
+
+## ENDING A CALL (applies to EVERY call — strict)
+- NEVER just end the call or hang up on your own. After you have handled what
+  the caller needed, ALWAYS ask if there is anything else you can help them
+  with (e.g. "Is there anything else I can help you with today?").
+- If they still need something, keep helping and ask again when done.
+- If they say no / they're all set: thank them warmly and ask THEM to hang up
+  to end the call (e.g. "Thank you for calling. You can go ahead and hang up
+  whenever you're ready — have a great day."). Do NOT append <<HANGUP>>.
+- Let the CALLER hang up. Do not append <<HANGUP>> before the caller does,
+  UNLESS at least 2 minutes have passed since the call started and the caller
+  has gone silent / is no longer responding. Only then may you give a final
+  goodbye and append <<HANGUP>>.
+- This rule applies to all calls, including verified callers, unverified
+  callers, new patients, prescribers, and wrong numbers.
+"""
+
+
+class PhoneAgent(NovaAgent):
+    """Nova persona for answering live phone calls: short spoken replies,
+    restricted tool set, identity verification before PHI."""
+
+    _VERIFY_FAIL_RE = re.compile(r"\b(not able to verify|can't verify|cannot verify)\b", re.IGNORECASE)
+    _VERIFY_FAIL_RE_ES = re.compile(r"\b(no puedo verificar|no se puede verificar)\b", re.IGNORECASE)
+    _FOLLOWUP_HINT_RE = re.compile(
+        r"\b(message|call\s?back|callback|transfer|team member|representative|pharmacist|mensaje|devolver\s+la\s+llamada|transferir|miembro\s+del\s+equipo|representante|farmaceutico)\b",
+        re.IGNORECASE,
+    )
+    _VERIFY_DETAIL_RE = re.compile(
+        r"(\bi found a record\b|\bdate of birth\b.*\b(on file|in our system|record|match|mismatch)\b|\bdob\b.*\b(on file|in our system|record|match|mismatch)\b)",
+        re.IGNORECASE,
+    )
+    _VERIFY_DETAIL_RE_ES = re.compile(
+        r"(\bencontre\s+un\s+registro\b|\bfecha\s+de\s+nacimiento\b.*\b(sistema|registro|coincide|no coincide)\b)",
+        re.IGNORECASE,
+    )
+    _SPANISH_REQUEST_RE = re.compile(
+        r"\b(spanish|espanol|en espanol|habla espanol|prefiero espanol|quiero espanol)\b",
+        re.IGNORECASE,
+    )
+    _ENGLISH_REQUEST_RE = re.compile(
+        r"\b(english|in english|en ingles|prefiero ingles|quiero ingles)\b",
+        re.IGNORECASE,
+    )
+    _SPANISH_HINT_RE = re.compile(
+        r"\b(hola|gracias|por favor|buenas|necesito|quiero|mensaje|equipo|farmacia|fecha de nacimiento|llamada|resurtido|relleno)\b",
+        re.IGNORECASE,
+    )
+
+    def _update_language_mode(self, message: str) -> None:
+        text = str(message or "").strip()
+        if not text:
+            return
+        if self._ENGLISH_REQUEST_RE.search(text):
+            self._language_mode = "en"
+            return
+        if self._SPANISH_REQUEST_RE.search(text) or self._SPANISH_HINT_RE.search(text):
+            self._language_mode = "es"
+
+    def _sanitize_failed_verification_reply(self, reply: str) -> str:
+        text = str(reply or "").strip()
+        leaked_verify_detail = bool(
+            self._VERIFY_FAIL_RE.search(text)
+            or self._VERIFY_FAIL_RE_ES.search(text)
+            or self._VERIFY_DETAIL_RE.search(text)
+            or self._VERIFY_DETAIL_RE_ES.search(text)
+        )
+        if not text or not leaked_verify_detail:
+            return text
+
+        # Preserve call-control markers while normalizing the spoken text.
+        transfer = "<<TRANSFER>>" in text
+        hangup = "<<HANGUP>>" in text
+
+        if self._language_mode == "es":
+            if self._FOLLOWUP_HINT_RE.search(text):
+                clean = (
+                    "No puedo verificar esa informacion. "
+                    "Quiere que tome un mensaje para que nuestro personal le devuelva la llamada, "
+                    "o prefiere hablar con un miembro del equipo ahora?"
+                )
+            else:
+                clean = (
+                    "No puedo verificar esa informacion. "
+                    "Puedo tomar un mensaje para que el personal le devuelva la llamada, "
+                    "o transferirle con un miembro del equipo."
+                )
+        else:
+            if self._FOLLOWUP_HINT_RE.search(text):
+                clean = (
+                    "I'm not able to verify that information. "
+                    "Would you like me to take a message for our staff to call you back, "
+                    "or would you prefer to speak with a team member now?"
+                )
+            else:
+                clean = (
+                    "I'm not able to verify that information. "
+                    "I can take a callback message for staff, or transfer you to a team member."
+                )
+
+        if transfer:
+            clean = f"{clean} <<TRANSFER>>"
+        if hangup:
+            clean = f"{clean} <<HANGUP>>"
+        return clean.strip()
+
+    def chat(self, message: str) -> str:
+        msg = str(message or "")
+        stripped = msg.strip()
+        if stripped.lower().startswith("the call has ended."):
+            raw = super().chat(message)
+            return raw
+
+        self._update_language_mode(stripped)
+
+        model_input = stripped
+        if self._language_mode == "es":
+            model_input = (
+                "Caller language mode is Spanish. Reply in natural spoken Spanish unless the caller asks to switch languages. "
+                "Keep all privacy and verification rules unchanged. Caller says: "
+                f"{stripped}"
+            )
+
+        raw = super().chat(model_input)
+        return self._sanitize_failed_verification_reply(raw)
+
+    def __init__(self, caller_number: str = "", patient_match: Optional[Dict] = None):
+        self._language_mode = "en"
+        patient_context = "No patient record matches this phone number."
+        if patient_match and isinstance(patient_match, dict):
+            p = patient_match.get("patient") or patient_match
+            name = str(p.get("name") or f"{p.get('first_name','')} {p.get('last_name','')}").strip()
+            pid = p.get("id") or p.get("patient_id")
+            if name or pid:
+                patient_context = (f"This number matches patient: {name or 'unknown name'}"
+                                   f"{f' (patient id {pid})' if pid else ''}.")
+        suffix = PHONE_PERSONA.format(
+            caller_number=caller_number or "unknown",
+            patient_context=patient_context,
+            today=datetime.now().strftime("%m/%d/%Y"),
+        )
+        super().__init__(voice=False, system_suffix=suffix,
+                         tools=PHONE_TOOLS, max_tokens=300)
 
 
 # ══════════════════════════════════════════════════════════════════════════

@@ -1258,6 +1258,20 @@ class MainWindow(PDFViewer):
         self.action_sticky_notes.triggered.connect(self.open_sticky_notes)
 
         tools_menu.addAction(self.action_sticky_notes)
+
+        self.action_restart_fax_intake = QAction("Restart Fax Intake", self)
+        self.action_restart_fax_intake.setToolTip(
+            "Re-enable and trigger known fax intake scheduled tasks"
+        )
+        self.action_restart_fax_intake.triggered.connect(self._restart_fax_intake_task)
+        tools_menu.addAction(self.action_restart_fax_intake)
+
+        self.action_fax_intake_health = QAction("Fax Intake Health", self)
+        self.action_fax_intake_health.setToolTip(
+            "Show task status and recent fax downloader log lines"
+        )
+        self.action_fax_intake_health.triggered.connect(self._show_fax_intake_health)
+        tools_menu.addAction(self.action_fax_intake_health)
         
         # Import Rx → Order
         tools_menu.addSeparator()
@@ -1278,6 +1292,21 @@ class MainWindow(PDFViewer):
         )
         self.action_split_brother_delivery_batch.triggered.connect(self._run_delivery_ticket_triage_split)
         tools_menu.addAction(self.action_split_brother_delivery_batch)
+
+        # Keep parity with legacy fax workflows: expose the "RX Sent to Plan/MLTC"
+        # action even when the menu was rebuilt by modern setup paths.
+        has_plan_mltc_action = any("Plan/MLTC" in (a.text() or "") for a in tools_menu.actions())
+        if not has_plan_mltc_action and hasattr(self, "create_rx_sent_to_plan_fax"):
+            tools_menu.addSeparator()
+            self.action_rx_sent_to_plan = QAction(
+                "RX Sent to Plan/MLTC (Insurance Not Accepted)…",
+                self,
+            )
+            self.action_rx_sent_to_plan.setToolTip(
+                "Fax Rx to a Plan/MLTC when insurance is not accepted in-house"
+            )
+            self.action_rx_sent_to_plan.triggered.connect(self.create_rx_sent_to_plan_fax)
+            tools_menu.addAction(self.action_rx_sent_to_plan)
         
         # User Administration (only visible for users with users.manage permission)
         if has_permission("users.manage"):
@@ -1388,6 +1417,135 @@ class MainWindow(PDFViewer):
         self._notes_board.show()
         self._notes_board.raise_()
         self._notes_board.activateWindow()
+
+    def _run_schtasks(self, args: list[str]) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["schtasks", *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    @staticmethod
+    def _extract_task_field(output: str, field: str) -> str:
+        m = re.search(rf"^{re.escape(field)}:\s*(.+)$", output or "", re.MULTILINE)
+        return (m.group(1).strip() if m else "n/a")
+
+    def _restart_fax_intake_task(self) -> None:
+        task_names = [
+            "Automated Fax Downloader",
+        ]
+
+        try:
+            lines = ["Fax intake restart requested."]
+            found_any = False
+            had_error = False
+
+            for task_name in task_names:
+                tn = ["/TN", task_name]
+                query_before = self._run_schtasks(["/Query", *tn, "/V", "/FO", "LIST"])
+                if query_before.returncode != 0:
+                    lines.append(f"- {task_name}: not found")
+                    continue
+
+                found_any = True
+                before_out = query_before.stdout or ""
+                before_status = self._extract_task_field(before_out, "Status")
+                if before_status.lower() == "running":
+                    self._run_schtasks(["/End", *tn])
+
+                self._run_schtasks(["/Change", *tn, "/ENABLE"])
+                run_result = self._run_schtasks(["/Run", *tn])
+                query_after = self._run_schtasks(["/Query", *tn, "/V", "/FO", "LIST"])
+
+                if run_result.returncode != 0 and query_after.returncode != 0:
+                    had_error = True
+                    err = (
+                        run_result.stderr
+                        or run_result.stdout
+                        or query_after.stderr
+                        or query_after.stdout
+                        or "Unknown task scheduler error"
+                    ).strip()
+                    lines.append(f"- {task_name}: failed ({err})")
+                    continue
+
+                out = query_after.stdout or ""
+                status = self._extract_task_field(out, "Status")
+                next_run = self._extract_task_field(out, "Next Run Time")
+                last_result = self._extract_task_field(out, "Last Result")
+                lines.append(
+                    f"- {task_name}: {status} | Next: {next_run} | Last Result: {last_result}"
+                )
+
+            if not found_any:
+                QMessageBox.warning(
+                    self,
+                    "Fax Intake",
+                    "No known fax intake tasks were found.\n\n"
+                    "Expected task: Automated Fax Downloader",
+                )
+                return
+
+            if had_error:
+                QMessageBox.warning(self, "Fax Intake", "\n".join(lines))
+            else:
+                QMessageBox.information(self, "Fax Intake", "\n".join(lines))
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Fax Intake",
+                f"Unexpected error restarting fax intake:\n{exc}",
+            )
+
+    def _show_fax_intake_health(self) -> None:
+        task_names = [
+            "Automated Fax Downloader",
+        ]
+        log_path = Path(__file__).resolve().parents[2] / "tools" / "fax_downloader" / "fax_downloader_task.log"
+
+        try:
+            lines = ["Fax Intake Health"]
+            lines.append("Scheduled Tasks:")
+
+            for task_name in task_names:
+                tn = ["/TN", task_name]
+                query = self._run_schtasks(["/Query", *tn, "/V", "/FO", "LIST"])
+                if query.returncode != 0:
+                    lines.append(f"- {task_name}: not found")
+                    continue
+
+                out = query.stdout or ""
+                status = self._extract_task_field(out, "Status")
+                next_run = self._extract_task_field(out, "Next Run Time")
+                last_run = self._extract_task_field(out, "Last Run Time")
+                last_result = self._extract_task_field(out, "Last Result")
+                lines.append(
+                    f"- {task_name}: {status} | Last Run: {last_run} | Next: {next_run} | Last Result: {last_result}"
+                )
+
+            lines.append("")
+            lines.append(f"Downloader Log: {log_path}")
+            if log_path.exists():
+                try:
+                    tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-12:]
+                except Exception:
+                    tail = []
+                if tail:
+                    lines.append("Recent Lines:")
+                    lines.extend(tail)
+                else:
+                    lines.append("Recent Lines: (log file is empty)")
+            else:
+                lines.append("Recent Lines: (log file not found)")
+
+            QMessageBox.information(self, "Fax Intake Health", "\n".join(lines))
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Fax Intake Health",
+                f"Could not collect fax intake health:\n{exc}",
+            )
     
     def _set_light_theme(self):
         """Switch to light theme."""
@@ -2100,7 +2258,7 @@ class MainWindow(PDFViewer):
 
             # Billing type / status from enums (keeps consistency with DB layer)
             billing_type = (result.billing_type or "").strip() or BillingType.INSURANCE.value
-            order_status = OrderStatus.ON_HOLD.value if getattr(result, "on_hold", False) else OrderStatus.PENDING.value
+            order_status = OrderStatus.ON_HOLD.value if getattr(result, "on_hold", False) else OrderStatus.UNBILLED.value
 
             # Auto-flag orders created by agent-designated users
             _agent_created = is_current_user_agent()

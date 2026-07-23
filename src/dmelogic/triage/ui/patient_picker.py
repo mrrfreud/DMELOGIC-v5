@@ -86,11 +86,14 @@ class PatientPickerDialog(QDialog):
 
         btns = QHBoxLayout()
         self.create_btn = QPushButton("Create patient profile")
-        self.create_btn.setProperty("flat", True)
+        self.create_btn.setProperty("flat", False)
+        self.create_btn.setVisible(False)
+        self.create_btn.setEnabled(False)
         self.create_btn.clicked.connect(self._request_create_patient)
         btns.addWidget(self.create_btn)
         btns.addStretch()
-        cancel = QPushButton("Cancel"); cancel.setProperty("flat", True)
+        cancel = QPushButton("Cancel")
+        cancel.setProperty("flat", False)
         cancel.clicked.connect(self.reject)
         self.link_btn = QPushButton("Link patient")
         self.link_btn.setEnabled(False)
@@ -122,6 +125,11 @@ class PatientPickerDialog(QDialog):
             self.table.insertRow(i)
             for col, val in enumerate((r[1], r[2], r[3], r[4])):
                 self.table.setItem(i, col, QTableWidgetItem(str(val)))
+        has_query = bool((self.search.text() or "").strip())
+        can_create = has_query and not rows
+        self.create_btn.setVisible(can_create)
+        self.create_btn.setEnabled(can_create)
+
         self.status.setText(
             f"{len(rows)} match(es)" if rows else "No matching patients")
         if rows:

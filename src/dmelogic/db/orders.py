@@ -684,7 +684,8 @@ def update_order_fields(order_id: int, fields: dict, folder_path: Optional[str] 
         "special_instructions", "rx_date", "rx_date_2", "order_date", "delivery_date", "pickup_date",
         "icd_code_1", "icd_code_2", "icd_code_3", "icd_code_4", "icd_code_5",
         "prescriber_phone", "prescriber_fax", "epaces_alert",
-        "prescriber_name_2", "prescriber_npi_2", "patient_id"
+        "prescriber_name_2", "prescriber_npi_2", "patient_id",
+        "place_of_service"
     }
     update_fields = {k: v for k, v in fields.items() if k in allowed_fields}
     
@@ -725,7 +726,7 @@ def update_order_item(item_id: int, fields: dict, folder_path: Optional[str] = N
     
     # Allowed fields to prevent SQL injection
     allowed_fields = {
-        "qty", "refills", "day_supply", "cost_ea", "total",
+        "qty", "refills", "day_supply", "cost_ea", "total", "item_number",
         "modifier1", "modifier2", "modifier3", "modifier4",
         "directions", "pa_number", "rental_month", "is_rental",
         "prescriber_id", "prescriber_name", "prescriber_npi"
@@ -1449,7 +1450,17 @@ def create_order_from_wizard_result(
         )
 
         order_id = int(cur.lastrowid)
-        
+
+        # Persist Place of Service (11 Office / 12 Home …) for claim billing.
+        try:
+            if "place_of_service" in _table_columns(cur, "orders"):
+                cur.execute(
+                    "UPDATE orders SET place_of_service = ? WHERE id = ?",
+                    (place_of_service_code(getattr(result, "place_of_service", None)), order_id),
+                )
+        except sqlite3.OperationalError:
+            pass
+
         # If no refill_group_id was set, use this order's ID as its own group root
         if refill_group_id is None:
             cur.execute(
@@ -1609,6 +1620,7 @@ def create_incomplete_order_from_wizard_result(
                 "secondary_insurance": secondary_insurance or None,
                 "secondary_insurance_id": secondary_insurance_id or None,
                 "billing_selection": billing_selection or None,
+                "place_of_service": place_of_service_code(getattr(result, "place_of_service", None)),
                 "order_status": OrderStatus.INCOMPLETE.value,
                 "delivery_date": delivery_date or None,
                 "notes": notes,
@@ -1846,6 +1858,7 @@ def update_incomplete_order_from_wizard_result(
                 "secondary_insurance": secondary_insurance or None,
                 "secondary_insurance_id": secondary_insurance_id or None,
                 "billing_selection": (getattr(result, "billing_type", "") or "").strip() or None,
+                "place_of_service": place_of_service_code(getattr(result, "place_of_service", None)),
                 "order_status": order_status,
                 "delivery_date": (getattr(result, "delivery_date", "") or "").strip() or None,
                 "notes": notes or None,
@@ -2023,6 +2036,16 @@ def create_order_from_wizard_result_uow(
         )
 
         order_id = int(cur.lastrowid)
+
+        # Persist Place of Service (11 Office / 12 Home …) for claim billing.
+        try:
+            if "place_of_service" in _table_columns(cur, "orders"):
+                cur.execute(
+                    "UPDATE orders SET place_of_service = ? WHERE id = ?",
+                    (place_of_service_code(getattr(result, "place_of_service", None)), order_id),
+                )
+        except sqlite3.OperationalError:
+            pass
 
         # Insert items
         today_item_str = order_date_str
@@ -2275,6 +2298,16 @@ def create_refill_order_from_source(
             ),
         )
         new_order_id = cur.lastrowid
+
+        # Carry the source order's Place of Service onto the refill (needed for
+        # claim billing; without this a refill would fall back to the default).
+        try:
+            cur.execute(
+                "UPDATE orders SET place_of_service = ? WHERE id = ?",
+                (place_of_service_code(src.get("place_of_service")), new_order_id),
+            )
+        except sqlite3.OperationalError:
+            pass
 
         # Force all status/billing flags to the fresh Unbilled state so we never inherit
         # workflow progress from the source order, even if legacy columns exist.

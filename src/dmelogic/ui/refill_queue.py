@@ -481,6 +481,7 @@ class RefillQueueWidget(QWidget):
                     "patient_id": row["patient_id"],
                     "hcpcs": row["hcpcs_code"] or "",
                     "description": row["description"] or "",
+                    "qty": row["qty"] or "",
                     "refills": num_refills,
                     "day_supply": num_days,
                     "next_due": next_due.strftime("%m/%d/%Y"),
@@ -805,7 +806,13 @@ class RefillQueueWidget(QWidget):
         self._batch_process(order_ids)
 
     def _batch_process(self, order_ids: List[int]):
-        """Process a list of order IDs as refills."""
+        """Process a list of order IDs as refills.
+
+        Refills always create the new, current-dated orders (the source orders
+        are never edited). Any new order that exceeds Max-Units limits or has an
+        incompatible combination is listed afterward so it can be corrected on
+        that new order before billing.
+        """
         progress = QProgressDialog("Creating refill orders...", "Cancel", 0, len(order_ids), self)
         progress.setWindowTitle("Batch Refill Processing")
         progress.setWindowModality(Qt.WindowModality.WindowModal)
@@ -813,6 +820,7 @@ class RefillQueueWidget(QWidget):
 
         success_count = 0
         failed = []
+        new_ids: List[int] = []
 
         for i, oid in enumerate(order_ids):
             if progress.wasCanceled():
@@ -823,9 +831,11 @@ class RefillQueueWidget(QWidget):
             QApplication.processEvents()
 
             try:
-                ok = self._create_single_refill(oid)
-                if ok:
+                new_id = self._create_single_refill(oid)
+                if new_id:
                     success_count += 1
+                    if isinstance(new_id, int):
+                        new_ids.append(new_id)
                 else:
                     failed.append(str(oid))
             except Exception as e:
@@ -839,19 +849,44 @@ class RefillQueueWidget(QWidget):
         if failed:
             msg += f"\n\n❌ Failed ({len(failed)}):\n" + "\n".join(failed[:10])
 
+        # Flag any NEW orders that need a quantity/combination edit before billing.
+        try:
+            from dmelogic.order_rules import evaluate_orders_from_db
+            flagged = evaluate_orders_from_db(
+                new_ids, folder_path=self.folder_path,
+                orders_db_file=getattr(self, "orders_db_file", None),
+            )
+            if flagged:
+                lines = []
+                for label, rep in flagged:
+                    for v in rep.qty_violations:
+                        lines.append(f"  • {label}: {v.hcpcs} qty {v.qty} exceeds max {v.max_units}")
+                    for c in rep.conflicts:
+                        lines.append(f"  • {label}: {c.code_a} + {c.code_b} cannot be billed together")
+                msg += (
+                    "\n\n⚠ These new orders need a quantity/item edit before billing "
+                    "(the source orders were left unchanged):\n" + "\n".join(lines[:20])
+                )
+        except Exception as e:
+            debug_log(f"Batch refill flag skipped: {e}")
+
         QMessageBox.information(self, "Batch Processing Complete", msg)
 
         # Refresh
         self.refresh_queue()
         self.refill_processed.emit()
 
-    def _create_single_refill(self, order_id: int) -> bool:
-        """Create a refill order for the given order_id. Returns True on success."""
+    def _create_single_refill(self, order_id: int):
+        """Create a refill order for the given order_id.
+
+        Returns the new order id (int) on success via the refill service, a
+        truthy value on the fallback paths, or False/None on failure.
+        """
         # Try the new refill service first
         try:
             from dmelogic.refill_service import process_refill
             result = process_refill(order_id, folder_path=self.folder_path)
-            return result is not None
+            return getattr(result, "id", None) if result is not None else None
         except ValueError as e:
             err_str = str(e)
             if "ICD-10" in err_str or "diagnosis code" in err_str.lower():

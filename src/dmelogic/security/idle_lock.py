@@ -43,6 +43,7 @@ class IdleLockManager(QObject):
         self._lock_callback = lock_callback
         self._last_activity = datetime.utcnow()
         self._locked = False
+        self._deferred_due_to_modal = False
 
         self._timer = QTimer(self)
         self._timer.setInterval(30_000)  # check every 30s
@@ -61,16 +62,49 @@ class IdleLockManager(QObject):
         """Call from re-auth flow to reset the timer on successful unlock."""
         self._last_activity = datetime.utcnow()
         self._locked = False
+        self._deferred_due_to_modal = False
 
     def _check(self) -> None:
         if self._locked:
             return
-        if datetime.utcnow() - self._last_activity >= self._timeout:
-            self._locked = True
-            logger.info("Idle timeout reached — locking session.")
+        if datetime.utcnow() - self._last_activity < self._timeout:
+            return
+
+        # Avoid opening the lock dialog while another modal dialog is active
+        # (for example, Add New Patient), which can make the UI appear frozen.
+        modal = None
+        try:
+            modal = self._app.activeModalWidget()
+        except Exception:
+            modal = None
+
+        if modal is not None:
             try:
-                self._lock_callback()
-            except Exception as e:
-                logger.error(f"lock_callback failed: {e}")
-                # If lock fails, don't get stuck — allow retry next tick.
-                self._locked = False
+                if modal.isVisible():
+                    if not self._deferred_due_to_modal:
+                        title = ""
+                        try:
+                            title = (modal.windowTitle() or "").strip()
+                        except Exception:
+                            title = ""
+                        if title:
+                            logger.info(
+                                "Idle timeout reached but modal dialog is open (%s); deferring lock.",
+                                title,
+                            )
+                        else:
+                            logger.info("Idle timeout reached but modal dialog is open; deferring lock.")
+                    self._deferred_due_to_modal = True
+                    return
+            except Exception:
+                pass
+
+        self._deferred_due_to_modal = False
+        self._locked = True
+        logger.info("Idle timeout reached — locking session.")
+        try:
+            self._lock_callback()
+        except Exception as e:
+            logger.error(f"lock_callback failed: {e}")
+            # If lock fails, don't get stuck — allow retry next tick.
+            self._locked = False

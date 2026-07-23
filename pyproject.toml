@@ -22,6 +22,7 @@ dependencies = [
     # OCR
     "pytesseract>=0.3.10",
     "Pillow>=10.0.0",
+    "numpy>=1.24.0",
     "watchdog>=3.0.0",
     # NPI registry / HTTP
     "requests>=2.31.0",
@@ -40,6 +41,8 @@ dependencies = [
 nova = [
     "fastapi>=0.136.0",
     "uvicorn>=0.48.0",
+    # multipart/form-data parsing for the phone Rx upload endpoint
+    "python-multipart>=0.0.9",
 ]
 # Build/packaging tooling.
 build = [

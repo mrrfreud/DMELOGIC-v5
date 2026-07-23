@@ -139,6 +139,12 @@ class TriageWidget(QWidget):
         self.search_edit.setFixedWidth(300)
         header.addWidget(self.search_edit)
         header.addStretch()
+        capture_btn = QPushButton("📱 Capture Rx")
+        capture_btn.setStyleSheet(_BTN_PRIMARY)
+        capture_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        capture_btn.setToolTip("Use your phone to photograph an Rx — generates a QR code, converts photos to PDF, and places the file in New Orders")
+        capture_btn.clicked.connect(self._open_phone_capture)
+        header.addWidget(capture_btn)
         refresh_btn = QPushButton("↻ Refresh New Rx")
         refresh_btn.setStyleSheet(_BTN_GHOST)
         refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -183,6 +189,7 @@ class TriageWidget(QWidget):
         vc_l = QVBoxLayout(viewer_card)
         vc_l.setContentsMargins(8, 8, 8, 8)
         self.viewer = DocumentViewer()
+        self.viewer.trimRequested.connect(self._apply_trim)
         vc_l.addWidget(self.viewer)
         splitter.addWidget(viewer_card)
 
@@ -219,6 +226,16 @@ class TriageWidget(QWidget):
         self.rename_btn.setStyleSheet(_BTN_GHOST)
         self.rename_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.rename_btn.clicked.connect(self._rename)
+        self.trim_doc_btn = QPushButton("✂ Trim")
+        self.trim_doc_btn.setStyleSheet(_BTN_GHOST)
+        self.trim_doc_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.trim_doc_btn.setToolTip("Drag a box on the document to trim it manually")
+        self.trim_doc_btn.clicked.connect(self._toggle_trim_mode)
+        self.undo_trim_btn = QPushButton("↶ Undo Trim")
+        self.undo_trim_btn.setStyleSheet(_BTN_GHOST)
+        self.undo_trim_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.undo_trim_btn.setToolTip("Restore the document to its state before the last trim")
+        self.undo_trim_btn.clicked.connect(self._undo_trim)
         self.link_btn = QPushButton("🔗 Link patient")
         self.link_btn.setStyleSheet(_BTN_PRIMARY)
         self.link_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -229,6 +246,8 @@ class TriageWidget(QWidget):
         self.create_order_btn.setToolTip("Create a new order for the linked patient")
         self.create_order_btn.clicked.connect(self._create_order)
         actions.addWidget(self.rename_btn)
+        actions.addWidget(self.trim_doc_btn)
+        actions.addWidget(self.undo_trim_btn)
         actions.addWidget(self.link_btn)
         actions.addWidget(self.create_order_btn)
         layout.addLayout(actions)
@@ -601,7 +620,7 @@ class TriageWidget(QWidget):
             self.history_list.addItem(item)
 
     def _set_details_enabled(self, on: bool) -> None:
-        for w in (self.rename_btn, self.link_btn, self.create_order_btn, self.note_edit, self.routing_host):
+        for w in (self.rename_btn, self.trim_doc_btn, self.undo_trim_btn, self.link_btn, self.create_order_btn, self.note_edit, self.routing_host):
             w.setEnabled(on)
 
     # ── actions ─────────────────────────────────────────────────────────
@@ -623,6 +642,49 @@ class TriageWidget(QWidget):
                 QMessageBox.warning(self, "Rename failed", str(e))
             self.refresh(keep_selection=True)
             self._show_doc(self._current_doc)
+
+    def _toggle_trim_mode(self):
+        if not self._current_doc:
+            return
+        self.viewer.enable_trim_mode()
+
+    def _apply_trim(self):
+        if not self._current_doc:
+            return
+        crop_box = self.viewer.current_trim_box()
+        if crop_box is None:
+            QMessageBox.information(
+                self,
+                "Trim document",
+                "Drag a box over the document before applying trim.",
+            )
+            return
+        self.viewer.release()
+        try:
+            self._current_doc = self.svc.trim_document(
+                self._current_doc,
+                crop_box,
+                page_index=self.viewer.current_page_index(),
+            )
+        except Exception as e:
+            QMessageBox.warning(self, "Trim failed", str(e))
+            return
+        self.viewer.cancel_trim()
+        self.refresh(keep_selection=True)
+        self._show_doc(self._current_doc)
+
+    def _undo_trim(self):
+        if not self._current_doc:
+            return
+        self.viewer.release()
+        try:
+            self._current_doc = self.svc.undo_trim(self._current_doc)
+        except Exception as e:
+            QMessageBox.information(self, "Undo trim", str(e))
+            return
+        self.viewer.cancel_trim()
+        self.refresh(keep_selection=True)
+        self._show_doc(self._current_doc)
 
     def _build_rename_suggestion(self, doc: Document) -> str:
         """Build rename seed: LAST, FIRST (DOB) CATEGORY RXDATE."""
@@ -960,6 +1022,16 @@ class TriageWidget(QWidget):
         dlg = BucketManagerDialog(self.svc.store, self)
         dlg.exec()
         self.refresh(keep_selection=True)
+
+    def _open_phone_capture(self) -> None:
+        """Show QR-code dialog so a phone can upload an Rx photo to New Orders."""
+        from dmelogic.ui.dialogs.phone_rx_upload_dialog import PhoneRxUploadDialog
+        folder = str(new_rx_folder())
+        dlg = PhoneRxUploadDialog(save_folder=folder, parent=self)
+        result = dlg.exec()
+        if result == PhoneRxUploadDialog.DialogCode.Accepted:
+            # Upload succeeded — refresh so the new PDF appears immediately
+            self.refresh(scan=True, keep_selection=False)
 
 
 # ── standalone runner ───────────────────────────────────────────────────

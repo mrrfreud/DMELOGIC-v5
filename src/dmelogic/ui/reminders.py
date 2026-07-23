@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtWidgets import QCheckBox, QMessageBox
 
 from dmelogic.core.constants import OrderStatus
@@ -108,6 +108,16 @@ def _fetch_attention_orders(orders_db: Path) -> tuple[list, list]:
 
 
 def _show_dialog(win, unbilled: list, due_holds: list) -> None:
+    existing = getattr(win, "_unbilled_reminder_dialog", None)
+    if existing is not None:
+        try:
+            if existing.isVisible():
+                existing.raise_()
+                existing.activateWindow()
+                return
+        except Exception:
+            pass
+
     messages = []
 
     if unbilled:
@@ -141,14 +151,24 @@ def _show_dialog(win, unbilled: list, due_holds: list) -> None:
         f"{len(unbilled)} unbilled orders, {len(due_holds)} holds due"
     )
     msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+    msg_box.setWindowModality(Qt.WindowModality.NonModal)
+    msg_box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
 
     snooze_cb = QCheckBox("Don't show again today")
     msg_box.setCheckBox(snooze_cb)
 
-    msg_box.exec()
+    def _on_finished(_result: int) -> None:
+        if snooze_cb.isChecked():
+            snooze_unbilled_reminder_today()
+            logger.info("Unbilled reminder snoozed until tomorrow.")
+        try:
+            if getattr(win, "_unbilled_reminder_dialog", None) is msg_box:
+                win._unbilled_reminder_dialog = None
+        except Exception:
+            pass
 
-    if snooze_cb.isChecked():
-        snooze_unbilled_reminder_today()
-        logger.info("Unbilled reminder snoozed until tomorrow.")
+    msg_box.finished.connect(_on_finished)
+    win._unbilled_reminder_dialog = msg_box
+    msg_box.open()
 
     logger.info(f"Shown unbilled reminder: {len(unbilled)} unbilled, {len(due_holds)} holds due")

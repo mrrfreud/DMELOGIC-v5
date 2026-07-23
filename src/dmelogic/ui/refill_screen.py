@@ -276,12 +276,22 @@ class RefillDueScreen(QWidget):
         
         # Get item IDs from selected rows
         item_ids = []
+        selected_refills = []
         for row in selected_rows:
             row_idx = row.row()
             if row_idx < len(self.refills_data):
                 refill = self.refills_data[row_idx]
                 item_ids.append(refill['order_item_id'])
-        
+                selected_refills.append(refill)
+
+        # Enforce Max-Units limits and incompatible-item combinations on the
+        # source orders before cloning them into refills. Over-limit source
+        # quantities and conflicting codes (e.g. A4554 with T4537/T4540 for the
+        # same patient) are soft-blocked: the user must edit the source/new
+        # order or explicitly override.
+        if not self._check_refill_rules(selected_refills):
+            return
+
         # Confirm
         msg = f"Create refill orders for {len(item_ids)} selected items?"
         reply = QMessageBox.question(
@@ -334,6 +344,53 @@ class RefillDueScreen(QWidget):
                 f"Failed to process refills: {e}"
             )
     
+    def _check_refill_rules(self, selected_refills: List[dict]) -> bool:
+        """
+        Validate selected refills against Max-Units limits and incompatible
+        combinations before processing.
+
+        Returns True to proceed (no issues, or the user overrode), False to
+        block so the user can edit the source/new order first.
+        """
+        if not selected_refills:
+            return True
+        try:
+            from dmelogic.order_rules import (
+                find_qty_violations, find_conflicts, RuleReport,
+                confirm_item_rule_issues,
+            )
+            from dmelogic.fee_schedule_enhancements import DbFeeScheduleReader
+
+            fee_reader = DbFeeScheduleReader(folder_path=self.folder_path)
+
+            # Quantity vs. Max Units (per selected refill's source quantity)
+            rule_items = [
+                (
+                    r.get('hcpcs_code', ''),
+                    r.get('quantity', 0),
+                    f"{r.get('patient_name', '')} — {r.get('description', '')}".strip(" —"),
+                )
+                for r in selected_refills
+            ]
+            qty_violations = find_qty_violations(rule_items, fee_reader)
+
+            # Incompatible combinations — evaluate per patient across the
+            # selected set (each patient shouldn't receive both A4554 and a
+            # reusable underpad code, whether in one order or split refills).
+            conflicts = []
+            by_patient: dict = {}
+            for r in selected_refills:
+                key = (r.get('patient_name', ''), r.get('patient_dob', ''))
+                by_patient.setdefault(key, []).append(r.get('hcpcs_code', ''))
+            for (pname, _dob), codes in by_patient.items():
+                conflicts.extend(find_conflicts(codes, label=pname or "this patient"))
+
+            report = RuleReport(qty_violations=qty_violations, conflicts=conflicts)
+            return confirm_item_rule_issues(self, report, context="refill")
+        except Exception as e:
+            debug_log(f"Refill rule check skipped: {e}")
+            return True
+
     def _on_export(self):
         """Export refills to CSV."""
         QMessageBox.information(

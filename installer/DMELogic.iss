@@ -54,7 +54,7 @@ DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir=Output
 OutputBaseFilename={#StringChange(MyAppName, ' ', '')}_Setup_{#MyAppVersion}
-SetupIconFile=..\assets\Nova Icon.ico
+SetupIconFile=..\assets\DMELogic Icon.ico
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -97,9 +97,9 @@ Name: "{#DataRoot}\Logs";             Permissions: users-modify
 [Icons]
 ; PyInstaller bundles data files (incl. assets) under {app}\_internal\, so the
 ; shortcut icon must point there — not {app}\assets\ (which doesn't exist).
-Name: "{group}\{#MyAppNameFull}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\_internal\assets\Nova Icon.ico"
+Name: "{group}\{#MyAppNameFull}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\_internal\assets\DMELogic Icon.ico"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\_internal\assets\Nova Icon.ico"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\_internal\assets\DMELogic Icon.ico"; Tasks: desktopicon
 
 [Registry]
 ; Per-machine install metadata. The app reads data_root from config/ProgramData,

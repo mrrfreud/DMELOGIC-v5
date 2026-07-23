@@ -19,6 +19,8 @@ class EventType(str, Enum):
     DISMISSED = "dismissed"  # removed from the queue without moving the file
     UNDONE = "undone"        # last move was reversed
     DELETED = "deleted"      # file sent to Trash and removed from the queue
+    TRIMMED = "trimmed"      # document was manually cropped in New Rx
+    UNTRIMMED = "untrimmed"  # last manual crop was reversed
 
 
 @dataclass
@@ -56,6 +58,7 @@ class Document:
     dismissed: bool = False              # removed from the queue without moving
     previous_path: Optional[str] = None      # for Undo: where the file came from
     previous_bucket_id: Optional[int] = None  # for Undo: prior bucket (None=inbox)
+    trim_backup_path: Optional[str] = None    # one-step backup for Undo Trim
     ocr_done: bool = False               # OCR has been attempted
     ocr_quality: str = ""                # good / fair / low / failed
     detected_name: str = ""              # patient name read from the document
@@ -93,5 +96,7 @@ class DocumentEvent:
             EventType.DISMISSED: "Dismissed from queue (file left in place)",
             EventType.UNDONE: f"Undid move{(' — ' + self.detail) if self.detail else ''}",
             EventType.DELETED: "Deleted (moved to Trash)",
+            EventType.TRIMMED: f"Trimmed {self.detail}".rstrip(),
+            EventType.UNTRIMMED: "Undid trim",
         }.get(self.type, self.detail or self.type.value)
         return text

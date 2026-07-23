@@ -334,11 +334,15 @@ class OrderInput:
     
     prescriber_name: Optional[str] = None
     prescriber_npi: Optional[str] = None
+    prescriber_phone: Optional[str] = None
+    prescriber_fax: Optional[str] = None
     
     # Second prescriber (for orders with multiple RXs from different doctors)
     rx_date_2: Optional[str] = None
     prescriber_name_2: Optional[str] = None
     prescriber_npi_2: Optional[str] = None
+    prescriber_phone_2: Optional[str] = None
+    prescriber_fax_2: Optional[str] = None
     
     rx_date: Optional[str] = None
     order_date: Optional[str] = None
