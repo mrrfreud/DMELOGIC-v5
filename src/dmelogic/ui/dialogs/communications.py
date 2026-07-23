@@ -309,6 +309,16 @@ class SendFaxDialog(QDialog):
         self.selected_file = initial_file
         self.recipient_name = recipient_name
         
+        # Populated once a fax is actually queued, so a caller (e.g. New Rx
+        # forwarding) can record what happened and route the document.
+        self.sent_ok = False
+        self.sent_to_number = ""
+        self.sent_recipient_name = ""
+        self.sent_contact_id = None
+        self.sent_contact_category = None
+        self.selected_contact_id = None
+        self.selected_contact_category = None
+
         self.setWindowTitle("Send Fax")
         self.setMinimumSize(500, 400)
         self._setup_ui()
@@ -411,6 +421,10 @@ class SendFaxDialog(QDialog):
             if contact is None:
                 return
             keys = contact.keys()
+            self.selected_contact_id = int(contact_id)
+            self.selected_contact_category = (
+                contact["category"] if "category" in keys else None
+            )
             name = (contact["display_name"] or "").strip() or (contact["last_name"] or "")
             facility = (loc["facility_name"] or "").strip()
             self.recipient_name = f"{name} — {facility}" if facility and facility != name else name
@@ -726,6 +740,12 @@ class SendFaxDialog(QDialog):
         )
 
         if result['success']:
+            # Record what was sent so the caller can log/route the document.
+            self.sent_ok = True
+            self.sent_to_number = to_number
+            self.sent_recipient_name = self.recipient_name or ""
+            self.sent_contact_id = self.selected_contact_id
+            self.sent_contact_category = self.selected_contact_category
             self.fax_sent.emit(result)
             QMessageBox.information(
                 self,

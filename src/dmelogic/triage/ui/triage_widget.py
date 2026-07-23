@@ -19,7 +19,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt, QTimer, QThread
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+    QAbstractItemView, QDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMenu, QMessageBox, QPushButton, QSplitter,
     QTextEdit, QVBoxLayout, QWidget,
 )
@@ -151,6 +151,15 @@ class TriageWidget(QWidget):
         refresh_btn.setToolTip(f"Rescan and reload documents from: {new_rx_folder()}")
         refresh_btn.clicked.connect(lambda: self.refresh(scan=True, keep_selection=True))
         header.addWidget(refresh_btn)
+        file_attached_btn = QPushButton("🧹 File Attached → Ready")
+        file_attached_btn.setStyleSheet(_BTN_GHOST)
+        file_attached_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        file_attached_btn.setToolTip(
+            "Scan New Orders and move every document that is already attached to an "
+            "order into the Ready bucket, to clean up the folder."
+        )
+        file_attached_btn.clicked.connect(self._file_attached_to_ready)
+        header.addWidget(file_attached_btn)
         manage_btn = QPushButton("⚙ Manage Buckets")
         manage_btn.setStyleSheet(_BTN_GHOST)
         manage_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -245,11 +254,21 @@ class TriageWidget(QWidget):
         self.create_order_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.create_order_btn.setToolTip("Create a new order for the linked patient")
         self.create_order_btn.clicked.connect(self._create_order)
+        self.forward_fax_btn = QPushButton("📠 Forward Fax")
+        self.forward_fax_btn.setStyleSheet(_BTN_GHOST)
+        self.forward_fax_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.forward_fax_btn.setToolTip(
+            "Fax this document to another DME vendor or an Ins/MLTC.\n"
+            "The document is renamed first, then a note is recorded and it is\n"
+            "moved to the matching bucket automatically."
+        )
+        self.forward_fax_btn.clicked.connect(self._forward_fax)
         actions.addWidget(self.rename_btn)
         actions.addWidget(self.trim_doc_btn)
         actions.addWidget(self.undo_trim_btn)
         actions.addWidget(self.link_btn)
         actions.addWidget(self.create_order_btn)
+        actions.addWidget(self.forward_fax_btn)
         layout.addLayout(actions)
 
         # Routing
@@ -305,11 +324,62 @@ class TriageWidget(QWidget):
                 self.svc.scan_inbox()
             except Exception as e:
                 logger.warning("Inbox scan failed: %s", e)
+        # Auto-file any New Orders document that is already attached to an order
+        # into Ready — catches attachments made in the order wizard OR the order
+        # editor, wherever the fax was linked.
+        self._auto_file_attached_docs()
         self._refresh_locations()
         self._refresh_doc_list(keep_selection=keep_selection)
         self._refresh_routing_buttons()
         if scan:
             self._start_ocr_if_needed()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        # Returning to the New Rx tab is a good moment to sweep freshly-attached
+        # documents into Ready.
+        try:
+            if self._auto_file_attached_docs():
+                self._refresh_locations()
+                self._refresh_doc_list(keep_selection=True)
+                self._refresh_routing_buttons()
+        except Exception:
+            pass
+
+    def _auto_file_attached_docs(self) -> int:
+        """
+        Silently move inbox documents already attached to an order into Ready.
+
+        Returns the number moved. Guarded against re-entrancy so the moves it
+        performs don't recurse through refresh().
+        """
+        if getattr(self, "_auto_filing", False):
+            return 0
+        self._auto_filing = True
+        moved = 0
+        try:
+            import os
+            ready = self._find_bucket("Ready", "ready")
+            if ready is None:
+                return 0
+            attached = self._attached_order_filenames()
+            if not attached:
+                return 0
+            for d in self.svc.inbox():
+                name = os.path.basename(str(getattr(d, "current_path", "") or "")).strip().lower()
+                if not name or name not in attached:
+                    continue
+                try:
+                    self.viewer.release()
+                    self.svc.move_to_bucket(d, ready)
+                    if self._current_doc is not None and getattr(self._current_doc, "id", None) == d.id:
+                        self._current_doc = None
+                    moved += 1
+                except Exception as e:
+                    print(f"[triage] auto-file failed for {d.filename}: {e}")
+        finally:
+            self._auto_filing = False
+        return moved
 
     # ── background OCR ──────────────────────────────────────────────────
     def _start_ocr_if_needed(self) -> None:
@@ -620,7 +690,8 @@ class TriageWidget(QWidget):
             self.history_list.addItem(item)
 
     def _set_details_enabled(self, on: bool) -> None:
-        for w in (self.rename_btn, self.trim_doc_btn, self.undo_trim_btn, self.link_btn, self.create_order_btn, self.note_edit, self.routing_host):
+        for w in (self.rename_btn, self.trim_doc_btn, self.undo_trim_btn, self.link_btn,
+                  self.create_order_btn, self.forward_fax_btn, self.note_edit, self.routing_host):
             w.setEnabled(on)
 
     # ── actions ─────────────────────────────────────────────────────────
@@ -642,6 +713,126 @@ class TriageWidget(QWidget):
                 QMessageBox.warning(self, "Rename failed", str(e))
             self.refresh(keep_selection=True)
             self._show_doc(self._current_doc)
+
+    # Names the intake gives a document before anyone has identified it.
+    _AUTO_NAME_PATTERNS = (
+        r"^\d{8}_\d{6}_",            # 20260721_121147_RingCentral_…
+        r"^PhoneRx_\d{8}",           # PhoneRx_20260722_162518
+        r"^\d{8}_\d{6}$",            # bare timestamp
+        r"^(scan|fax|doc|image|untitled)[\s_-]*\d*$",
+    )
+
+    def _looks_unrenamed(self, doc) -> bool:
+        """True while the file still carries its automatic intake name."""
+        import re
+        from pathlib import Path
+        stem = Path(getattr(doc, "current_path", "") or "").stem
+        if not stem:
+            return True
+        return any(re.match(p, stem, re.IGNORECASE) for p in self._AUTO_NAME_PATTERNS)
+
+    def _forward_fax(self):
+        """
+        Fax this document to another DME vendor or an Ins/MLTC.
+
+        The document must be named properly first — it is about to leave the
+        building, and the name is what identifies it in the outgoing log and in
+        whatever bucket it lands in. Once the fax is queued, a note records who
+        it went to and the document is routed to the matching bucket.
+        """
+        if not self._current_doc:
+            return
+
+        # 1) Force a rename while the file still has its intake name.
+        if self._looks_unrenamed(self._current_doc):
+            QMessageBox.information(
+                self, "Rename first",
+                "This document still has its automatic intake name.\n\n"
+                "Rename it before forwarding — the name is what identifies it "
+                "in the fax log and in the bucket it moves to.",
+            )
+            self._rename()
+            if not self._current_doc or self._looks_unrenamed(self._current_doc):
+                return  # user cancelled or left the name unchanged
+
+        # 2) Send the fax, with this document attached.
+        try:
+            from dmelogic.ui.dialogs.communications import SendFaxDialog
+            from dmelogic.fax_contacts import (
+                CATEGORY_DME, CATEGORY_INS_MLTC, normalize_category,
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Forward Fax", f"Fax feature unavailable:\n{e}")
+            return
+
+        doc_path = str(getattr(self._current_doc, "current_path", "") or "")
+        patient_name = (getattr(self._current_doc, "patient_name", "") or "")
+        self.viewer.release()  # free the handle so the file can be read/moved
+
+        dlg = SendFaxDialog(
+            parent=self,
+            patient_id=getattr(self._current_doc, "patient_id", None),
+            patient_name=patient_name,
+            initial_file=doc_path,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted or not getattr(dlg, "sent_ok", False):
+            self.refresh(keep_selection=True)
+            return
+
+        # 3) Record what happened, then route the document.
+        recipient = dlg.sent_recipient_name or dlg.sent_to_number or "recipient"
+        number = dlg.sent_to_number or ""
+        category = normalize_category(dlg.sent_contact_category) if dlg.sent_contact_category else None
+
+        note = f"Faxed to {recipient}"
+        if number:
+            note += f" ({number})"
+        if category == CATEGORY_DME:
+            note += " — forwarded to another DME vendor; we cannot service this patient."
+        elif category == CATEGORY_INS_MLTC:
+            note += " — sent to insurance / MLTC."
+        try:
+            self.svc.add_note(self._current_doc, note)
+        except Exception as e:
+            QMessageBox.warning(self, "Note", f"Fax sent, but the note could not be saved:\n{e}")
+
+        target = None
+        if category == CATEGORY_DME:
+            target = self._find_bucket("Fowarded to other DME Vendor", "forward", "dme vendor")
+        elif category == CATEGORY_INS_MLTC:
+            target = self._find_bucket("Faxed to Ins./MLTC", "ins", "mltc")
+
+        if target is not None:
+            self._move_to(target)
+            QMessageBox.information(
+                self, "Forwarded",
+                f"Fax queued to {recipient}.\n\nNote recorded and the document moved to "
+                f"“{getattr(target, 'name', 'the matching bucket')}”.",
+            )
+        else:
+            self.refresh(keep_selection=True)
+            QMessageBox.information(
+                self, "Fax Sent",
+                f"Fax queued to {recipient} and a note recorded.\n\n"
+                "No matching bucket was found, so the document was left where it is — "
+                "move it manually.",
+            )
+
+    def _find_bucket(self, exact_name: str, *keywords: str):
+        """Find a bucket by name, tolerating spelling drift in the bucket list."""
+        try:
+            buckets = list(self.svc.buckets())
+        except Exception:
+            return None
+        for b in buckets:
+            if (getattr(b, "name", "") or "").strip().lower() == exact_name.strip().lower():
+                return b
+        # Fall back to keyword matching so a renamed/misspelled bucket still resolves.
+        for b in buckets:
+            label = (getattr(b, "name", "") or "").lower()
+            if all(k.lower() in label for k in keywords):
+                return b
+        return None
 
     def _toggle_trim_mode(self):
         if not self._current_doc:
@@ -1008,15 +1199,137 @@ class TriageWidget(QWidget):
             pass  # If patient lookup fails, at least pass the patient_id
         
         # Find the main window (parent chain)
+        doc = self._current_doc
+        wizard = None
         parent = self.parent()
         while parent is not None:
             if hasattr(parent, 'open_new_order_wizard'):
                 # Pass patient context to the wizard
-                parent.open_new_order_wizard(
+                wizard = parent.open_new_order_wizard(
                     patient_context=patient_context
                 )
                 break
             parent = parent.parent()
+
+        # When the order is created with THIS document attached, file the fax
+        # into the Ready bucket automatically to clean up New Rx.
+        if wizard is not None and doc is not None and hasattr(wizard, "accepted"):
+            wizard.accepted.connect(
+                lambda w=wizard, d=doc: self._file_doc_to_ready_if_attached(w, d)
+            )
+
+    def _file_doc_to_ready_if_attached(self, wizard, doc):
+        """Move `doc` to the Ready bucket if the created order attached it."""
+        try:
+            import os
+            result = getattr(wizard, "result", None)
+            if result is None:
+                return
+            attached = {
+                os.path.basename(str(p)).strip().lower()
+                for p in (getattr(result, "attachment_paths", None) or [])
+                if p
+            }
+            doc_name = os.path.basename(str(getattr(doc, "current_path", "") or "")).strip().lower()
+            if not doc_name or doc_name not in attached:
+                return  # this fax wasn't attached to the order — leave it alone
+
+            ready = self._find_bucket("Ready", "ready")
+            if ready is None:
+                return
+            self.viewer.release()
+            moved = self.svc.move_to_bucket(doc, ready)
+            if self._current_doc is doc:
+                self._current_doc = moved
+            self.refresh(keep_selection=False)
+        except Exception as e:
+            print(f"[triage] auto-file to Ready failed: {e}")
+
+    def _attached_order_filenames(self) -> set:
+        """Lowercased basenames of every file attached to an order."""
+        import os
+        names: set = set()
+        try:
+            from dmelogic.db.base import get_connection
+            conn = get_connection("orders.db", folder_path=getattr(self, "folder_path", None))
+            try:
+                for col in ("attached_rx_files", "attached_signed_ticket_files"):
+                    try:
+                        for (val,) in conn.execute(
+                            f"SELECT {col} FROM orders WHERE {col} IS NOT NULL AND TRIM({col}) <> ''"
+                        ):
+                            for line in str(val).replace(";", "\n").splitlines():
+                                line = line.strip()
+                                if line:
+                                    names.add(os.path.basename(line).strip().lower())
+                    except Exception:
+                        pass  # column may not exist in older schemas
+            finally:
+                conn.close()
+        except Exception as e:
+            print(f"[triage] attached-filenames query failed: {e}")
+        return names
+
+    def _file_attached_to_ready(self):
+        """
+        Scan New Orders and move any document already attached to an order into
+        the Ready bucket — a one-click cleanup of files that are done with triage.
+        """
+        import os
+        ready = self._find_bucket("Ready", "ready")
+        if ready is None:
+            QMessageBox.warning(self, "File Attached", "Could not find the Ready bucket.")
+            return
+
+        attached = self._attached_order_filenames()
+        if not attached:
+            QMessageBox.information(
+                self, "File Attached",
+                "No orders have attached documents on file, so there is nothing to move.",
+            )
+            return
+
+        docs = self.svc.inbox()
+        matches = [
+            d for d in docs
+            if os.path.basename(str(getattr(d, "current_path", "") or "")).strip().lower() in attached
+        ]
+        if not matches:
+            QMessageBox.information(
+                self, "File Attached",
+                "None of the documents in New Orders are attached to an order.",
+            )
+            return
+
+        preview = "\n".join(f"  • {d.filename}" for d in matches[:12])
+        if len(matches) > 12:
+            preview += f"\n  …and {len(matches) - 12} more"
+        if QMessageBox.question(
+            self, "File Attached Documents",
+            f"{len(matches)} document(s) in New Orders are already attached to an order:\n\n"
+            f"{preview}\n\nMove them to the Ready bucket?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        ) != QMessageBox.StandardButton.Yes:
+            return
+
+        self.viewer.release()  # free any open handle so files can move
+        moved = 0
+        failed = []
+        for d in matches:
+            try:
+                self.svc.move_to_bucket(d, ready)
+                moved += 1
+            except Exception as e:
+                failed.append(d.filename)
+                print(f"[triage] file-attached move failed for {d.filename}: {e}")
+        self._current_doc = None
+        self.refresh(keep_selection=False)
+
+        msg = f"Moved {moved} attached document(s) to Ready."
+        if failed:
+            msg += f"\n\n{len(failed)} could not be moved:\n" + "\n".join(f"  • {n}" for n in failed[:8])
+        QMessageBox.information(self, "Filed to Ready", msg)
 
     def _manage_buckets(self):
         dlg = BucketManagerDialog(self.svc.store, self)

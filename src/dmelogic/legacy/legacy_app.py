@@ -12701,20 +12701,22 @@ class PDFViewer(QMainWindow):
                 initial_patient=patient_context,
                 rx_context=rx_context
             )
-            
+
             # Register as child window
             if hasattr(self, 'register_child_window'):
                 self.register_child_window(wizard)
 
             self._wire_order_wizard_handlers(wizard)
-            
+
             wizard.show()
             wizard.raise_()
             wizard.activateWindow()
+            return wizard
         except Exception as e:
             import traceback
             traceback.print_exc()
             QMessageBox.warning(self, "New Order", f"Could not open order wizard: {e}")
+            return None
 
     def _wire_order_wizard_handlers(self, wizard):
         def on_accepted():
