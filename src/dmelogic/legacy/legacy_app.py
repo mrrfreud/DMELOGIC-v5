@@ -3901,28 +3901,40 @@ class NewOrderDialog(QDialog):
                 pass
 
     def load_clinics(self):
-        """Load clinics into the clinic combo box."""
+        """Load facilities into the clinic combo box.
+
+        Facilities come from the contact locations in prescribers.db — the same
+        offices managed under Contacts → Locations. The retired clinics.db is no
+        longer consulted; orders still store the facility as display text, so
+        anything already recorded keeps showing.
+        """
         try:
             self.clinic_combo.blockSignals(True)
             self.clinic_combo.clear()
             self.clinic_combo.addItem("")  # Empty option
-            
-            db = getattr(self.parent, 'clinics_database_file', None)
-            if not db:
-                return
-            
-            import sqlite3
-            conn = sqlite3.connect(db)
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, clinic_name, city FROM clinics WHERE status='Active' ORDER BY clinic_name")
-            
-            for row in cursor.fetchall():
-                clinic_id, name, city = row
+
+            from dmelogic.db.base import get_connection
+            conn = get_connection("prescribers.db",
+                                  folder_path=getattr(self.parent, 'folder_path', None))
+            try:
+                rows = conn.execute(
+                    """SELECT DISTINCT TRIM(facility_name) AS name, COALESCE(city,'') AS city
+                         FROM fax_contact_locations
+                        WHERE COALESCE(TRIM(facility_name),'') <> ''
+                          AND COALESCE(status,'Active') <> 'Inactive'
+                        ORDER BY name COLLATE NOCASE ASC"""
+                ).fetchall()
+            finally:
+                conn.close()
+
+            seen = set()
+            for name, city in rows:
                 display = f"{name}" + (f" ({city})" if city else "")
-                self.clinic_combo.addItem(display, clinic_id)
-            
-            conn.close()
-            
+                if display in seen:
+                    continue
+                seen.add(display)
+                self.clinic_combo.addItem(display)
+
         except Exception as e:
             print(f"Dialog: load_clinics failed: {e}")
         finally:
@@ -10616,7 +10628,7 @@ class PDFViewer(QMainWindow):
         self.setup_patient_database()
         self.setup_insurance_database()
         self.setup_prescriber_database()
-        self.setup_clinics_database()
+        # clinics.db retired — facilities are contact locations in prescribers.db
         self.setup_suppliers_database()
         self.setup_orders_database()
         self.setup_inventory_database()
