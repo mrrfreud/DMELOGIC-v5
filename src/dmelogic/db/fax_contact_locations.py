@@ -339,6 +339,157 @@ def update_contact(contact_id: int, values: dict, folder_path: Optional[str] = N
         return False
 
 
+def _name_tokens(row) -> set:
+    """Name reduced to comparable parts, ignoring field order and punctuation.
+
+    First/last are pooled together because they are frequently entered the wrong
+    way round ("BACK, KIM" vs "KIM, BACK"), and hyphens/spaces are split so
+    "MORA" and "MORA-MCLAUGHLIN" share a token.
+    """
+    text = f"{row['last_name'] or ''} {row['first_name'] or ''}".upper()
+    for ch in "-,._/\\":
+        text = text.replace(ch, " ")
+    return {t for t in text.split() if len(t) > 1}
+
+
+def _names_look_unrelated(members) -> bool:
+    """
+    True only when two records under one NPI share no part of a name.
+
+    An NPI identifies exactly one provider, so records sharing one are the same
+    person and differences are data-entry variance (swapped fields, a typo, a
+    compound surname). No shared name part at all is the one case worth a second
+    look, because it suggests the NPI itself was mistyped onto another provider.
+    """
+    token_sets = [t for t in (_name_tokens(m) for m in members) if t]
+    for i in range(len(token_sets)):
+        for j in range(i + 1, len(token_sets)):
+            a, b = token_sets[i], token_sets[j]
+            if a & b:
+                continue
+            # Allow near-misses like SPANO / SPANOS before calling it unrelated.
+            if any(x.startswith(y) or y.startswith(x) for x in a for y in b):
+                continue
+            return True
+    return False
+
+
+def find_duplicate_contacts(folder_path: Optional[str] = None) -> List[dict]:
+    """
+    Find contacts that share an NPI — the legacy of cloning a prescriber once
+    per practice location.
+
+    Returns a list of groups, each ``{"npi", "name_mismatch", "members": [rows]}``.
+    ``name_mismatch`` flags a group whose surnames differ: an NPI belongs to one
+    provider, so that is a data-entry error rather than a true duplicate and
+    should not be merged without looking.
+    """
+    try:
+        conn = _conn(folder_path)
+        try:
+            npis = conn.execute(
+                """SELECT npi_number FROM prescribers
+                    WHERE COALESCE(TRIM(npi_number),'') <> ''
+                    GROUP BY npi_number HAVING COUNT(*) > 1
+                    ORDER BY npi_number"""
+            ).fetchall()
+            groups = []
+            for row in npis:
+                npi = row["npi_number"]
+                members = conn.execute(
+                    "SELECT * FROM prescribers WHERE npi_number = ? ORDER BY id ASC", (npi,)
+                ).fetchall()
+                groups.append({
+                    "npi": npi,
+                    "members": members,
+                    "name_mismatch": _names_look_unrelated(members),
+                })
+            return groups
+        finally:
+            conn.close()
+    except Exception as e:
+        debug_log(f"DB Error in find_duplicate_contacts: {e}")
+        return []
+
+
+def merge_contacts(keeper_id: int, duplicate_ids: List[int],
+                   folder_path: Optional[str] = None) -> tuple[bool, str]:
+    """
+    Fold duplicate contacts into one, moving their locations onto the keeper.
+
+    Order history is unaffected: orders snapshot the prescriber's name/NPI/fax as
+    text rather than pointing at the contact row, and locations keep their ids so
+    an order's prescriber_location_id still resolves.
+
+    Returns (ok, message).
+    """
+    dup_ids = [int(d) for d in duplicate_ids if int(d) != int(keeper_id)]
+    if not dup_ids:
+        return False, "Nothing to merge."
+    try:
+        conn = _conn(folder_path)
+        try:
+            existing = conn.execute(
+                """SELECT COALESCE(TRIM(facility_name),''), COALESCE(TRIM(fax),''),
+                          COALESCE(TRIM(address_line1),''), COALESCE(TRIM(city),'')
+                     FROM fax_contact_locations WHERE contact_id = ?""",
+                (int(keeper_id),),
+            ).fetchall()
+            seen = {tuple(r) for r in existing}
+
+            moved = dropped = 0
+            for dup in dup_ids:
+                for loc in conn.execute(
+                    "SELECT * FROM fax_contact_locations WHERE contact_id = ?", (dup,)
+                ).fetchall():
+                    key = (
+                        (loc["facility_name"] or "").strip(),
+                        (loc["fax"] or "").strip(),
+                        (loc["address_line1"] or "").strip(),
+                        (loc["city"] or "").strip(),
+                    )
+                    if key in seen:
+                        # Identical office already on the keeper — drop the copy.
+                        conn.execute("DELETE FROM fax_contact_locations WHERE id = ?", (loc["id"],))
+                        dropped += 1
+                    else:
+                        conn.execute(
+                            "UPDATE fax_contact_locations SET contact_id = ?, is_primary = 0 WHERE id = ?",
+                            (int(keeper_id), loc["id"]),
+                        )
+                        seen.add(key)
+                        moved += 1
+                conn.execute("DELETE FROM prescribers WHERE id = ?", (dup,))
+            conn.commit()
+
+            # Exactly one primary must remain on the keeper.
+            prim = conn.execute(
+                "SELECT COUNT(*) FROM fax_contact_locations WHERE contact_id = ? AND is_primary = 1",
+                (int(keeper_id),),
+            ).fetchone()[0]
+            if not prim:
+                first = conn.execute(
+                    "SELECT id FROM fax_contact_locations WHERE contact_id = ? ORDER BY id ASC LIMIT 1",
+                    (int(keeper_id),),
+                ).fetchone()
+                if first:
+                    conn.execute(
+                        "UPDATE fax_contact_locations SET is_primary = 1 WHERE id = ?", (first["id"],)
+                    )
+                    conn.commit()
+        finally:
+            conn.close()
+
+        sync_primary_to_contact(keeper_id, folder_path=folder_path)
+        note = f"Merged {len(dup_ids)} duplicate(s): {moved} location(s) moved"
+        if dropped:
+            note += f", {dropped} identical location(s) discarded"
+        return True, note
+    except Exception as e:
+        debug_log(f"DB Error in merge_contacts: {e}")
+        return False, str(e)
+
+
 def create_organization_contact(display_name: str, category: str,
                                 default_cover_message: Optional[str] = None,
                                 folder_path: Optional[str] = None) -> Optional[int]:

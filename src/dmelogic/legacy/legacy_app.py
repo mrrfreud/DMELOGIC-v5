@@ -14986,6 +14986,11 @@ class PDFViewer(QMainWindow):
             "Add an organization we fax — another DME supplier, or an insurance / MLTC",
             on_click=self.add_organization_contact
         )
+        self.btn_merge_contacts = self.prescriber_button_bar.add_button(
+            "merge_contacts", "🔗 Merge Duplicates",
+            "Combine contacts that share an NPI — one prescriber cloned per office",
+            on_click=self.merge_duplicate_contacts
+        )
         self.btn_delete_prescriber = self.prescriber_button_bar.add_button(
             "delete_prescriber", "🗑️ Delete Prescriber", "Delete selected prescriber",
             on_click=self.delete_prescriber
@@ -35449,6 +35454,16 @@ class PDFViewer(QMainWindow):
                 self.load_prescribers()
         except Exception as e:
             QMessageBox.critical(self, "Add Contact", f"Could not add contact:\n{e}")
+
+    def merge_duplicate_contacts(self):
+        """Review and merge contacts that share an NPI (the clone-per-office legacy)."""
+        try:
+            from dmelogic.ui.dialogs.merge_contacts_dialog import MergeContactsDialog
+            dlg = MergeContactsDialog(parent=self, folder_path=getattr(self, "folder_path", None))
+            dlg.exec()
+            self.load_prescribers()
+        except Exception as e:
+            QMessageBox.critical(self, "Merge Duplicates", f"Could not open the merge tool:\n{e}")
 
     def edit_contact_sheet(self, contact_id: int) -> bool:
         """
