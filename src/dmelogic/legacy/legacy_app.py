@@ -10653,7 +10653,8 @@ class PDFViewer(QMainWindow):
         self.create_patient_management_tab()  # Patients
         self.create_prescriber_tab()          # Prescribers
         self.create_orders_tracking_tab()     # Orders
-        self.create_clinics_tab()             # Clinics
+        # Clinics tab retired: clinic/facility details now live as locations on
+        # the fax contacts in the Prescribers tab (see 📍 Locations).
         # Additional tabs
         self.create_must_go_out_tab()
         self.create_inventory_tab()  # Uses existing inventory tab implementation
@@ -14962,6 +14963,11 @@ class PDFViewer(QMainWindow):
         self.btn_clone_prescriber = self.prescriber_button_bar.add_button(
             "clone_prescriber", "📋 Clone Prescriber", "Clone prescriber for different practice location",
             on_click=self.clone_prescriber
+        )
+        self.btn_prescriber_locations = self.prescriber_button_bar.add_button(
+            "prescriber_locations", "📍 Locations",
+            "Manage this contact's offices/locations — each with its own facility name, phone and fax",
+            on_click=self.manage_prescriber_locations
         )
         self.btn_delete_prescriber = self.prescriber_button_bar.add_button(
             "delete_prescriber", "🗑️ Delete Prescriber", "Delete selected prescriber",
@@ -35395,6 +35401,36 @@ class PDFViewer(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to edit order: {e}")
             print(f"Edit order error: {e}")
+
+    def manage_prescriber_locations(self):
+        """Open the locations manager for the selected contact.
+
+        A prescriber who practises at several offices keeps one record with
+        many locations here, instead of being cloned once per office.
+        """
+        current_row = self.prescriber_table.currentRow()
+        if current_row < 0:
+            QMessageBox.warning(self, "No Selection", "Please select a contact to manage locations.")
+            return
+        try:
+            contact_id = int(self.prescriber_table.item(current_row, 0).text())
+            last_name = self.prescriber_table.item(current_row, 1).text()
+            first_name = self.prescriber_table.item(current_row, 2).text()
+            name = ", ".join(p for p in (last_name, first_name) if p)
+
+            from dmelogic.ui.dialogs.contact_locations_dialog import ContactLocationsDialog
+            dlg = ContactLocationsDialog(
+                contact_id=contact_id,
+                contact_name=name,
+                folder_path=getattr(self, "folder_path", None),
+                parent=self,
+            )
+            dlg.exec()
+            # The primary location is mirrored onto the contact's flat columns,
+            # so refresh the table to show any change.
+            self.load_prescribers()
+        except Exception as e:
+            QMessageBox.critical(self, "Locations", f"Could not open locations:\n{e}")
 
     def edit_prescriber(self):
         """Edit selected prescriber."""

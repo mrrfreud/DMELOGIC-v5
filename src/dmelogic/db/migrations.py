@@ -462,10 +462,123 @@ class Migration002_AddPrescriberPortalAccess(Migration):
             pass
 
 
-# Prescriber migrations list
+class Migration003_AddFaxContactCategories(Migration):
+    """
+    Turn the prescribers table into the shared fax-contact directory.
+
+    A contact is either a person (a PRESCRIBER, keeping npi/dea/license) or an
+    organization we fax — another DME we refer a patient to, or an Ins/MLTC.
+    Organizations leave the person fields NULL and are identified by
+    display_name. `default_cover_message` seeds the fax cover sheet.
+    """
+    version = 3
+    description = "Add contact category / display_name / default_cover_message to prescribers"
+
+    def up(self, conn: sqlite3.Connection) -> None:
+        for ddl in (
+            "ALTER TABLE prescribers ADD COLUMN category TEXT DEFAULT 'PRESCRIBER'",
+            "ALTER TABLE prescribers ADD COLUMN display_name TEXT",
+            "ALTER TABLE prescribers ADD COLUMN default_cover_message TEXT",
+        ):
+            try:
+                conn.execute(ddl)
+            except sqlite3.OperationalError:
+                pass  # column already present
+
+        # Existing rows are all prescribers.
+        try:
+            conn.execute(
+                "UPDATE prescribers SET category = 'PRESCRIBER' "
+                "WHERE category IS NULL OR TRIM(category) = ''"
+            )
+            # Give every contact a display name for the fax picker.
+            conn.execute(
+                """UPDATE prescribers
+                      SET display_name = TRIM(
+                          COALESCE(last_name, '') ||
+                          CASE WHEN COALESCE(last_name,'') <> '' AND COALESCE(first_name,'') <> ''
+                               THEN ', ' ELSE '' END ||
+                          COALESCE(first_name, '')
+                      )
+                    WHERE display_name IS NULL OR TRIM(display_name) = ''"""
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_prescribers_category ON prescribers(category)"
+            )
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
+
+class Migration004_AddFaxContactLocations(Migration):
+    """
+    Give every contact multiple locations (a prescriber may practice at 4+
+    offices, each with its own facility name, phone and fax).
+
+    Each existing prescriber is migrated to exactly one primary location built
+    from its current flat address/phone/fax/practice_name columns. Those flat
+    columns stay as a mirror of the primary location so existing lookups keep
+    working unchanged.
+    """
+    version = 4
+    description = "Add fax_contact_locations and migrate each prescriber to a primary location"
+
+    def up(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS fax_contact_locations (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                contact_id      INTEGER NOT NULL,
+                facility_name   TEXT,
+                address_line1   TEXT,
+                address_line2   TEXT,
+                city            TEXT,
+                state           TEXT,
+                zip_code        TEXT,
+                phone           TEXT,
+                fax             TEXT,
+                is_primary      INTEGER DEFAULT 0,
+                status          TEXT DEFAULT 'Active',
+                notes           TEXT,
+                created_date    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_date    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (contact_id) REFERENCES prescribers(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_fax_locations_contact ON fax_contact_locations(contact_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_fax_locations_primary ON fax_contact_locations(contact_id, is_primary)"
+        )
+
+        # Backfill one primary location per contact that doesn't have one yet.
+        # Idempotent: re-running never creates duplicates.
+        conn.execute(
+            """
+            INSERT INTO fax_contact_locations (
+                contact_id, facility_name, address_line1, address_line2,
+                city, state, zip_code, phone, fax, is_primary, status
+            )
+            SELECT p.id, p.practice_name, p.address_line1, p.address_line2,
+                   p.city, p.state, p.zip_code, p.phone, p.fax, 1,
+                   COALESCE(NULLIF(TRIM(p.status), ''), 'Active')
+              FROM prescribers p
+             WHERE NOT EXISTS (
+                   SELECT 1 FROM fax_contact_locations l WHERE l.contact_id = p.id
+             )
+            """
+        )
+        conn.commit()
+
+
+# Prescriber / fax-contact migrations list
 PRESCRIBER_MIGRATIONS = [
     Migration001_AddPrescriberEPrescribe(),
     Migration002_AddPrescriberPortalAccess(),
+    Migration003_AddFaxContactCategories(),
+    Migration004_AddFaxContactLocations(),
 ]
 
 
