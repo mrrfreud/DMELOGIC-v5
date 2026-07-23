@@ -412,6 +412,26 @@ class Migration015_AddOrderPlaceOfService(Migration):
 
 
 # Order migrations list (sorted by version)
+class Migration016_AddOrderPrescriberLocation(Migration):
+    """
+    Record WHICH of the prescriber's offices an order belongs to.
+
+    A prescriber may practise at several locations with different fax numbers;
+    the order already snapshots the phone/fax it was written with, and this
+    records the location those came from so a refill fax goes back to the right
+    office even after the contact is edited.
+    """
+    version = 16
+    description = "Add prescriber_location_id to orders"
+
+    def up(self, conn: sqlite3.Connection) -> None:
+        try:
+            conn.execute("ALTER TABLE orders ADD COLUMN prescriber_location_id INTEGER")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
+
 ORDER_MIGRATIONS = [
     Migration001_AddOrderPriority(),
     Migration002_AddOrderAssignedTo(),
@@ -428,6 +448,7 @@ ORDER_MIGRATIONS = [
     Migration013_AddItemPrescriber(),
     Migration014_AddSoftDelete(),
     Migration015_AddOrderPlaceOfService(),
+    Migration016_AddOrderPrescriberLocation(),
 ]
 
 

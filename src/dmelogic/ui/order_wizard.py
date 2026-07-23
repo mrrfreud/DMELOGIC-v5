@@ -232,6 +232,8 @@ class OrderWizardResult:
     billing_type: str = ""
     # Place of Service for claim billing: "11" Office, "12" Home (default).
     place_of_service: str = "12"
+    # Which of the prescriber's offices this order was written at.
+    prescriber_location_id: Optional[int] = None
     notes: str = ""
 
     # NEW: patient identifier for persistence
@@ -1067,8 +1069,21 @@ class OrderWizard(QDialog):
         prescriber_widget = QWidget()
         prescriber_widget.setLayout(prescriber_layout)
 
+        # Which of the prescriber's offices this order is for. Selecting one
+        # fills the phone/fax below, so a refill fax later goes to that office.
+        self.prescriber_location_combo = QComboBox()
+        self.prescriber_location_combo.setToolTip(
+            "Which office this order was written at — sets the phone/fax for this order."
+        )
+        self.prescriber_location_combo.addItem("(select a prescriber first)", None)
+        self.prescriber_location_combo.setEnabled(False)
+        self.prescriber_location_combo.currentIndexChanged.connect(
+            self._on_prescriber_location_changed
+        )
+
         form.addRow("Prescriber:", prescriber_widget)
         form.addRow("NPI:", self.prescriber_npi_edit)
+        form.addRow("Office / Location:", self.prescriber_location_combo)
         form.addRow("Phone (for this order):", self.prescriber_phone_edit)
         form.addRow("Fax (for this order):", self.prescriber_fax_edit)
 
@@ -1230,6 +1245,10 @@ class OrderWizard(QDialog):
                     self.prescriber_npi_edit.setText(prescriber.get('npi') or "")
                     self.prescriber_phone_edit.setText(prescriber.get('phone') or "")
                     self.prescriber_fax_edit.setText(prescriber.get('fax') or "")
+                    self._load_prescriber_locations(
+                        npi=prescriber.get('npi') or "",
+                        contact_id=prescriber.get('id'),
+                    )
             
             dialog.accepted.connect(on_accepted)
             dialog.show()
@@ -1267,6 +1286,7 @@ class OrderWizard(QDialog):
                 self.prescriber_npi_edit.setText(data.get('npi_number') or "")
                 self.prescriber_phone_edit.setText(data.get('phone') or "")
                 self.prescriber_fax_edit.setText(data.get('fax') or "")
+                self._load_prescriber_locations(npi=data.get('npi_number') or "")
                 
                 QMessageBox.information(
                     self, 
@@ -1278,6 +1298,80 @@ class OrderWizard(QDialog):
             import traceback
             traceback.print_exc()
             QMessageBox.warning(self, "Error", f"Failed to open prescriber dialog: {e}")
+
+    def _load_prescriber_locations(self, npi: str = "", contact_id: Optional[int] = None) -> None:
+        """
+        Fill the office/location dropdown for the chosen prescriber.
+
+        Looked up by NPI (what the search dialog gives us) unless a contact id is
+        passed directly. Silently leaves the dropdown disabled if the prescriber
+        isn't on file — the order can still be written with typed phone/fax.
+        """
+        combo = getattr(self, "prescriber_location_combo", None)
+        if combo is None:
+            return
+        combo.blockSignals(True)
+        combo.clear()
+        try:
+            if contact_id is None and npi:
+                from dmelogic.db.prescribers import fetch_prescriber_by_npi
+                row = fetch_prescriber_by_npi(npi.strip(), folder_path=self.folder_path)
+                if row is not None:
+                    contact_id = int(row["id"])
+
+            if contact_id is None:
+                combo.addItem("(prescriber not on file)", None)
+                combo.setEnabled(False)
+                return
+
+            from dmelogic.db.fax_contact_locations import fetch_locations
+            locs = fetch_locations(int(contact_id), folder_path=self.folder_path)
+            if not locs:
+                combo.addItem("(no locations on file)", None)
+                combo.setEnabled(False)
+                return
+            for l in locs:
+                label = (l["facility_name"] or "").strip() or (l["city"] or "") or f"Location {l['id']}"
+                if l["is_primary"]:
+                    label = f"★ {label}"
+                if l["fax"]:
+                    label = f"{label} — fax {l['fax']}"
+                combo.addItem(label, int(l["id"]))
+            combo.setEnabled(True)
+        except Exception as e:
+            print(f"[wizard] could not load prescriber locations: {e}")
+            combo.addItem("(locations unavailable)", None)
+            combo.setEnabled(False)
+        finally:
+            combo.blockSignals(False)
+        # Apply the primary automatically.
+        if combo.isEnabled() and combo.count():
+            combo.setCurrentIndex(0)
+            self._on_prescriber_location_changed()
+
+    def _on_prescriber_location_changed(self) -> None:
+        """Copy the chosen office's phone/fax onto this order."""
+        combo = getattr(self, "prescriber_location_combo", None)
+        if combo is None:
+            return
+        location_id = combo.currentData()
+        if not location_id:
+            return
+        try:
+            from dmelogic.db.fax_contact_locations import get_location
+            loc = get_location(int(location_id), folder_path=self.folder_path)
+            if loc is None:
+                return
+            if loc["phone"]:
+                self.prescriber_phone_edit.setText(loc["phone"])
+            if loc["fax"]:
+                self.prescriber_fax_edit.setText(loc["fax"])
+        except Exception as e:
+            print(f"[wizard] could not apply location: {e}")
+
+    def _selected_prescriber_location_id(self) -> Optional[int]:
+        combo = getattr(self, "prescriber_location_combo", None)
+        return combo.currentData() if combo is not None else None
 
     def _upsert_prescriber_from_dialog(self, data: dict) -> tuple[bool, str]:
         """Insert/update a prescriber row based on dialog data."""
@@ -2428,6 +2522,7 @@ class OrderWizard(QDialog):
             place_of_service=place_of_service_code(
                 self.place_of_service_combo.currentText()
             ) if hasattr(self, "place_of_service_combo") else "12",
+            prescriber_location_id=self._selected_prescriber_location_id(),
             notes=self.notes_edit.toPlainText().strip() if hasattr(self, "notes_edit") else "",
             patient_id=self.patient_id,
             insurance_name=insurance_name,

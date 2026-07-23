@@ -1451,14 +1451,22 @@ def create_order_from_wizard_result(
 
         order_id = int(cur.lastrowid)
 
-        # Persist Place of Service (11 Office / 12 Home …) for claim billing.
+        # Persist Place of Service (11 Office / 12 Home …) for claim billing,
+        # and which prescriber office the order was written at.
         try:
-            if "place_of_service" in _table_columns(cur, "orders"):
+            _order_cols = _table_columns(cur, "orders")
+            if "place_of_service" in _order_cols:
                 cur.execute(
                     "UPDATE orders SET place_of_service = ? WHERE id = ?",
                     (place_of_service_code(getattr(result, "place_of_service", None)), order_id),
                 )
-        except sqlite3.OperationalError:
+            _loc_id = getattr(result, "prescriber_location_id", None)
+            if _loc_id and "prescriber_location_id" in _order_cols:
+                cur.execute(
+                    "UPDATE orders SET prescriber_location_id = ? WHERE id = ?",
+                    (int(_loc_id), order_id),
+                )
+        except (sqlite3.OperationalError, ValueError, TypeError):
             pass
 
         # If no refill_group_id was set, use this order's ID as its own group root
@@ -2037,14 +2045,22 @@ def create_order_from_wizard_result_uow(
 
         order_id = int(cur.lastrowid)
 
-        # Persist Place of Service (11 Office / 12 Home …) for claim billing.
+        # Persist Place of Service (11 Office / 12 Home …) for claim billing,
+        # and which prescriber office the order was written at.
         try:
-            if "place_of_service" in _table_columns(cur, "orders"):
+            _order_cols = _table_columns(cur, "orders")
+            if "place_of_service" in _order_cols:
                 cur.execute(
                     "UPDATE orders SET place_of_service = ? WHERE id = ?",
                     (place_of_service_code(getattr(result, "place_of_service", None)), order_id),
                 )
-        except sqlite3.OperationalError:
+            _loc_id = getattr(result, "prescriber_location_id", None)
+            if _loc_id and "prescriber_location_id" in _order_cols:
+                cur.execute(
+                    "UPDATE orders SET prescriber_location_id = ? WHERE id = ?",
+                    (int(_loc_id), order_id),
+                )
+        except (sqlite3.OperationalError, ValueError, TypeError):
             pass
 
         # Insert items

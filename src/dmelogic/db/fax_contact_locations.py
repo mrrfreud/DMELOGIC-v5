@@ -54,6 +54,21 @@ def fetch_locations(contact_id: int, folder_path: Optional[str] = None) -> List[
         return []
 
 
+def get_location(location_id: int, folder_path: Optional[str] = None) -> Optional[sqlite3.Row]:
+    """Fetch a single location by id."""
+    try:
+        conn = _conn(folder_path)
+        try:
+            return conn.execute(
+                "SELECT * FROM fax_contact_locations WHERE id = ?", (int(location_id),)
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        debug_log(f"DB Error in get_location: {e}")
+        return None
+
+
 def get_primary_location(contact_id: int, folder_path: Optional[str] = None) -> Optional[sqlite3.Row]:
     """The contact's primary location (falls back to any location)."""
     rows = fetch_locations(contact_id, folder_path=folder_path)
