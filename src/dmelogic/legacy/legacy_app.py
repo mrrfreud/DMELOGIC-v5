@@ -14969,6 +14969,11 @@ class PDFViewer(QMainWindow):
             "Manage this contact's offices/locations — each with its own facility name, phone and fax",
             on_click=self.manage_prescriber_locations
         )
+        self.btn_add_org_contact = self.prescriber_button_bar.add_button(
+            "add_org_contact", "🏢 Add DME / Ins-MLTC",
+            "Add an organization we fax — another DME supplier, or an insurance / MLTC",
+            on_click=self.add_organization_contact
+        )
         self.btn_delete_prescriber = self.prescriber_button_bar.add_button(
             "delete_prescriber", "🗑️ Delete Prescriber", "Delete selected prescriber",
             on_click=self.delete_prescriber
@@ -14995,10 +15000,22 @@ class PDFViewer(QMainWindow):
         toolbar.addWidget(self.prescriber_button_bar)
         toolbar.addStretch()
 
+        # Category filter — this tab holds every fax contact: prescribers plus
+        # organizations we fax (other DMEs, Ins/MLTC).
+        from dmelogic.fax_contacts import CATEGORY_OPTIONS
+        toolbar.addWidget(QLabel("Show:"))
+        self.contact_category_filter = QComboBox()
+        self.contact_category_filter.addItem("All contacts", None)
+        for _code, _label in CATEGORY_OPTIONS:
+            self.contact_category_filter.addItem(_label, _code)
+        self.contact_category_filter.setMinimumWidth(180)
+        self.contact_category_filter.currentIndexChanged.connect(self.load_prescribers)
+        toolbar.addWidget(self.contact_category_filter)
+
         # Search prescribers (pill)
         self.prescriber_search = QLineEdit()
         self.prescriber_search.setObjectName("presSearch")
-        self.prescriber_search.setPlaceholderText("🔍  Search prescribers by name, NPI, or specialty…")
+        self.prescriber_search.setPlaceholderText("🔍  Search by name, NPI, specialty, or facility…")
         self.prescriber_search.textChanged.connect(self.search_prescribers)
         toolbar.addWidget(self.prescriber_search)
 
@@ -15006,9 +15023,10 @@ class PDFViewer(QMainWindow):
         
         # Prescriber table
         self.prescriber_table = QTableWidget()
-        self.prescriber_table.setColumnCount(10)
+        self.prescriber_table.setColumnCount(12)
         self.prescriber_table.setHorizontalHeaderLabels([
-            "ID", "Last Name", "First Name", "Title", "Practice Name", "Specialty", "NPI", "Phone", "Fax", "Address"
+            "ID", "Last Name", "First Name", "Title", "Practice Name", "Specialty", "NPI", "Phone", "Fax", "Address",
+            "Type", "📍"
         ])
         
         # Set column resize modes and widths
@@ -15077,7 +15095,7 @@ class PDFViewer(QMainWindow):
         
         layout.addLayout(status_layout)
         
-        self.main_tabs.addTab(prescriber_tab, "Prescribers")
+        self.main_tabs.addTab(prescriber_tab, "Contacts")
         self.load_prescribers()
 
     def open_prescriber_sticky_notes(self):
@@ -35402,6 +35420,50 @@ class PDFViewer(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to edit order: {e}")
             print(f"Edit order error: {e}")
 
+    def add_organization_contact(self):
+        """
+        Add an organization we fax — another DME supplier we refer a patient to,
+        or an insurance / MLTC. These have no NPI or person details: just a name,
+        a category, and their locations (each with its own fax).
+        """
+        try:
+            from dmelogic.fax_contacts import CATEGORY_DME
+            from dmelogic.ui.dialogs.contact_sheet_dialog import ContactSheetDialog
+
+            dlg = ContactSheetDialog(
+                parent=self, category=CATEGORY_DME, folder_path=self.folder_path
+            )
+            if dlg.exec() == QDialog.DialogCode.Accepted:
+                self.load_prescribers()
+        except Exception as e:
+            QMessageBox.critical(self, "Add Contact", f"Could not add contact:\n{e}")
+
+    def edit_contact_sheet(self, contact_id: int) -> bool:
+        """
+        Open the contact sheet for an organization contact.
+
+        Returns True if this contact was handled here (i.e. it is an
+        organization); False for prescribers, which use the prescriber form.
+        """
+        try:
+            from dmelogic.db.fax_contact_locations import get_contact
+            from dmelogic.fax_contacts import is_organization
+            from dmelogic.ui.dialogs.contact_sheet_dialog import ContactSheetDialog
+
+            row = get_contact(contact_id, folder_path=self.folder_path)
+            if row is None or not is_organization(row["category"]):
+                return False
+
+            dlg = ContactSheetDialog(
+                parent=self, contact=dict(row), folder_path=self.folder_path
+            )
+            if dlg.exec() == QDialog.DialogCode.Accepted:
+                self.load_prescribers()
+            return True
+        except Exception as e:
+            QMessageBox.critical(self, "Contact", f"Could not open the contact sheet:\n{e}")
+            return True
+
     def manage_prescriber_locations(self):
         """Open the locations manager for the selected contact.
 
@@ -35433,12 +35495,23 @@ class PDFViewer(QMainWindow):
             QMessageBox.critical(self, "Locations", f"Could not open locations:\n{e}")
 
     def edit_prescriber(self):
-        """Edit selected prescriber."""
+        """Edit selected contact — the contact sheet for organizations, the
+        prescriber form for people."""
         current_row = self.prescriber_table.currentRow()
         if current_row < 0:
-            QMessageBox.warning(self, "No Selection", "Please select a prescriber to edit.")
+            QMessageBox.warning(self, "No Selection", "Please select a contact to edit.")
             return
-            
+
+        # DME / Ins-MLTC contacts have no NPI or prescriber details; they get
+        # the contact sheet instead of the prescriber form.
+        try:
+            _id_item = self.prescriber_table.item(current_row, 0)
+            if _id_item and self.edit_contact_sheet(int(_id_item.text())):
+                return
+        except Exception:
+            pass
+
+
         try:
             # Get prescriber data from selected row
             # Column 0 = ID, Column 1 = Last Name, Column 2 = First Name
@@ -37398,9 +37471,40 @@ class PDFViewer(QMainWindow):
         try:
             from dmelogic.db.prescribers import fetch_all_prescribers
             
-            # Fetch prescribers using the new DB layer
-            prescribers = fetch_all_prescribers(folder_path=self.folder_path)
-            
+            # Fetch contacts, honouring the category filter (prescribers, the
+            # DMEs we refer to, Ins/MLTC…). No filter selected => all contacts.
+            selected_category = None
+            try:
+                if hasattr(self, "contact_category_filter"):
+                    selected_category = self.contact_category_filter.currentData()
+            except Exception:
+                selected_category = None
+
+            if selected_category:
+                from dmelogic.db.fax_contact_locations import fetch_contacts_by_category
+                prescribers = fetch_contacts_by_category(
+                    selected_category, folder_path=self.folder_path
+                )
+            else:
+                prescribers = fetch_all_prescribers(folder_path=self.folder_path)
+
+            # Location counts for the 📍 column (one query, not one per row)
+            loc_counts = {}
+            try:
+                import sqlite3 as _sq
+                from dmelogic.db.base import get_connection as _gc
+                _c = _gc("prescribers.db", folder_path=self.folder_path)
+                try:
+                    loc_counts = {
+                        r[0]: r[1] for r in _c.execute(
+                            "SELECT contact_id, COUNT(*) FROM fax_contact_locations GROUP BY contact_id"
+                        )
+                    }
+                finally:
+                    _c.close()
+            except Exception:
+                loc_counts = {}
+
             # Clear existing table
             self.prescriber_table.setRowCount(0)
             
@@ -37515,8 +37619,25 @@ class PDFViewer(QMainWindow):
                 address_item = QTableWidgetItem(full_address)
                 address_item.setForeground(QColor("#000000"))
                 self.prescriber_table.setItem(row_idx, 9, address_item)
-                    
-            print(f"✅ Loaded {len(prescribers)} prescribers")
+
+                # Contact type (prescriber vs the organizations we fax)
+                try:
+                    from dmelogic.fax_contacts import category_label
+                    cat_text = category_label(prescriber["category"])
+                except Exception:
+                    cat_text = "Prescriber / MD Office"
+                cat_item = QTableWidgetItem(cat_text)
+                cat_item.setForeground(QColor("#000000"))
+                self.prescriber_table.setItem(row_idx, 10, cat_item)
+
+                # How many offices/locations this contact has
+                loc_item = QTableWidgetItem(str(loc_counts.get(id_val, 0)))
+                loc_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                loc_item.setForeground(QColor("#000000"))
+                loc_item.setToolTip("Number of locations — use 📍 Locations to manage them")
+                self.prescriber_table.setItem(row_idx, 11, loc_item)
+
+            print(f"✅ Loaded {len(prescribers)} contacts")
             
         except Exception as e:
             print(f"Error loading prescribers: {e}")

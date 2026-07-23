@@ -573,12 +573,38 @@ class Migration004_AddFaxContactLocations(Migration):
         conn.commit()
 
 
+class Migration005_AddContactPersonFields(Migration):
+    """
+    Restore the person-level contact fields the retired Clinics tab had.
+
+    When you fax a DME or an MLTC you often need to reach a named person —
+    "ask for Josefina (social worker), ext 12". Those fields lived on the old
+    clinics table; they belong on the contact now.
+    """
+    version = 5
+    description = "Add contact_person / position / phone / extension to contacts"
+
+    def up(self, conn: sqlite3.Connection) -> None:
+        for ddl in (
+            "ALTER TABLE prescribers ADD COLUMN contact_person TEXT",
+            "ALTER TABLE prescribers ADD COLUMN contact_position TEXT",
+            "ALTER TABLE prescribers ADD COLUMN contact_phone TEXT",
+            "ALTER TABLE prescribers ADD COLUMN contact_extension TEXT",
+        ):
+            try:
+                conn.execute(ddl)
+            except sqlite3.OperationalError:
+                pass
+        conn.commit()
+
+
 # Prescriber / fax-contact migrations list
 PRESCRIBER_MIGRATIONS = [
     Migration001_AddPrescriberEPrescribe(),
     Migration002_AddPrescriberPortalAccess(),
     Migration003_AddFaxContactCategories(),
     Migration004_AddFaxContactLocations(),
+    Migration005_AddContactPersonFields(),
 ]
 
 

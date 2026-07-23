@@ -263,6 +263,67 @@ def fetch_contacts_by_category(category: Optional[str] = None,
         return []
 
 
+CONTACT_FIELDS = (
+    "display_name", "category", "default_cover_message", "notes", "status",
+    "contact_person", "contact_position", "contact_phone", "contact_extension",
+)
+
+
+def get_contact(contact_id: int, folder_path: Optional[str] = None) -> Optional[sqlite3.Row]:
+    """Fetch a single contact row."""
+    try:
+        conn = _conn(folder_path)
+        try:
+            return conn.execute(
+                "SELECT * FROM prescribers WHERE id = ?", (int(contact_id),)
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        debug_log(f"DB Error in get_contact: {e}")
+        return None
+
+
+def update_contact(contact_id: int, values: dict, folder_path: Optional[str] = None) -> bool:
+    """
+    Update a contact's own fields (name, category, named person, cover message).
+    Location/address data is handled separately by the location functions.
+    """
+    cols = [f for f in CONTACT_FIELDS if f in values]
+    if not cols:
+        return False
+    try:
+        conn = _conn(folder_path)
+        try:
+            conn.execute(
+                f"UPDATE prescribers SET {', '.join(f'{c} = ?' for c in cols)}, "
+                f"updated_date = CURRENT_TIMESTAMP WHERE id = ?",
+                (*[values.get(c) for c in cols], int(contact_id)),
+            )
+            # Keep last_name aligned with display_name for organizations so the
+            # existing name-ordered lists and searches still find them.
+            if "display_name" in values:
+                from dmelogic.fax_contacts import is_organization
+                cat = values.get("category")
+                if cat is None:
+                    row = conn.execute(
+                        "SELECT category FROM prescribers WHERE id = ?", (int(contact_id),)
+                    ).fetchone()
+                    cat = row["category"] if row else None
+                if is_organization(cat):
+                    conn.execute(
+                        "UPDATE prescribers SET last_name = ?, first_name = '' WHERE id = ?",
+                        ((values.get("display_name") or "").strip(), int(contact_id)),
+                    )
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+    except Exception as e:
+        debug_log(f"DB Error in update_contact: {e}")
+        return False
+
+
 def create_organization_contact(display_name: str, category: str,
                                 default_cover_message: Optional[str] = None,
                                 folder_path: Optional[str] = None) -> Optional[int]:
