@@ -18,10 +18,11 @@ from datetime import datetime
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QTimer, QThread
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QAbstractItemView, QDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMenu, QMessageBox, QPushButton, QSplitter,
-    QTextEdit, QVBoxLayout, QWidget,
+    QStyle, QStyledItemDelegate, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from dmelogic.triage.models import Document
@@ -30,6 +31,64 @@ from dmelogic.triage.ui.bucket_manager import BucketManagerDialog
 from dmelogic.triage.ui.viewer import DocumentViewer
 
 logger = logging.getLogger("triage.ui")
+
+# Data roles used to two-tone the document rows (bucket tag + filename).
+_TAG_ROLE = int(Qt.ItemDataRole.UserRole) + 10
+_TAGCOLOR_ROLE = int(Qt.ItemDataRole.UserRole) + 11
+_NAME_ROLE = int(Qt.ItemDataRole.UserRole) + 12
+
+_FILENAME_BLUE = "#2563eb"
+
+
+class _DocRowDelegate(QStyledItemDelegate):
+    """Paint a document row as: [bucket] in the bucket's colour, filename in blue.
+
+    Rows without a ``_NAME_ROLE`` (e.g. plain inbox lists) fall back to the
+    default rendering, so existing views are untouched.
+    """
+
+    def paint(self, painter, option, index):
+        name = index.data(_NAME_ROLE)
+        if not name:
+            super().paint(painter, option, index)
+            return
+
+        self.initStyleOption(option, index)
+        widget = option.widget
+        style = widget.style() if widget else None
+        # Draw the row background/selection but not its (default) text.
+        opt = option
+        text = opt.text
+        opt.text = ""
+        if style:
+            style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
+        opt.text = text
+
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        rect = option.rect.adjusted(8, 0, -8, 0)
+        painter.save()
+        painter.setFont(option.font)
+        fm = painter.fontMetrics()
+        x = rect.left()
+
+        tag = index.data(_TAG_ROLE)
+        if tag:
+            tag_text = f"{tag}  "
+            painter.setPen(QColor("#ffffff") if selected
+                           else QColor(index.data(_TAGCOLOR_ROLE) or "#64748b"))
+            painter.drawText(rect.left(), rect.top(), fm.horizontalAdvance(tag_text),
+                             rect.height(),
+                             int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
+                             tag_text)
+            x += fm.horizontalAdvance(tag_text)
+
+        painter.setPen(QColor("#ffffff") if selected else QColor(_FILENAME_BLUE))
+        avail = rect.right() - x
+        elided = fm.elidedText(name, Qt.TextElideMode.ElideRight, max(10, avail))
+        painter.drawText(x, rect.top(), max(10, avail), rect.height(),
+                         int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
+                         elided)
+        painter.restore()
 
 _INBOX_KEY = "__inbox__"
 _ALL_KEY = "__all__"
@@ -183,6 +242,7 @@ class TriageWidget(QWidget):
         left_l.addWidget(self._muted("DOCUMENTS"))
         self.doc_list = QListWidget()
         self.doc_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.doc_list.setItemDelegate(_DocRowDelegate(self.doc_list))
         self.doc_list.currentItemChanged.connect(self._on_doc_changed)
         # Allow dragging a document onto a bucket in Locations to route it.
         self.doc_list.setDragEnabled(True)
@@ -359,22 +419,39 @@ class TriageWidget(QWidget):
         moved = 0
         try:
             import os
+            from PyQt6.QtWidgets import QApplication
             ready = self._find_bucket("Ready", "ready")
             if ready is None:
                 return 0
             attached = self._attached_order_filenames()
             if not attached:
                 return 0
-            for d in self.svc.inbox():
-                name = os.path.basename(str(getattr(d, "current_path", "") or "")).strip().lower()
-                if not name or name not in attached:
-                    continue
+            to_move = [
+                d for d in self.svc.inbox()
+                if os.path.basename(str(getattr(d, "current_path", "") or "")).strip().lower() in attached
+            ]
+            if not to_move:
+                return 0
+
+            # If the viewer is showing one of these files it holds a handle that
+            # blocks the move (WinError 32). Fully clear the viewer once and let
+            # the OS release the handle before moving anything.
+            self.viewer.load(None)
+            self._current_doc = None
+            QApplication.processEvents()
+
+            for d in to_move:
                 try:
-                    self.viewer.release()
-                    self.svc.move_to_bucket(d, ready)
-                    if self._current_doc is not None and getattr(self._current_doc, "id", None) == d.id:
-                        self._current_doc = None
-                    moved += 1
+                    result = self.svc.move_to_bucket(d, ready)
+                    if getattr(result, "bucket_id", None):
+                        moved += 1
+                    else:
+                        # Move was blocked (e.g. still locked) — try once more
+                        # after another event cycle rather than hammering it.
+                        QApplication.processEvents()
+                        result = self.svc.move_to_bucket(d, ready)
+                        if getattr(result, "bucket_id", None):
+                            moved += 1
                 except Exception as e:
                     print(f"[triage] auto-file failed for {d.filename}: {e}")
         finally:
@@ -471,6 +548,12 @@ class TriageWidget(QWidget):
         #  3) DB updated/created timestamps.
         docs = sorted(docs, key=self._doc_sort_key, reverse=True)
 
+        # When results can span multiple buckets (searching or "All documents"),
+        # tag each row with the bucket it lives in — otherwise a hit gives no
+        # clue whether it's still in New Rx, filed to Ready, Denied, etc.
+        show_bucket = bool(search) or self._location == _ALL_KEY
+        _bkt = {b.id: b for b in self.svc.buckets()}
+
         from dmelogic.triage.ocr import quality_badge, GOOD, FAIR
         from PyQt6.QtGui import QColor
         self.doc_list.blockSignals(True)
@@ -480,8 +563,23 @@ class TriageWidget(QWidget):
             prefix = ""
             if d.ocr_done and d.ocr_quality not in (GOOD, FAIR, ""):
                 prefix = "⚠  "
-            item = QListWidgetItem(prefix + d.filename)
+            tag = tag_color = None
+            if show_bucket:
+                b = _bkt.get(d.bucket_id) if d.bucket_id is not None else None
+                where = getattr(b, "name", None) or "New Rx"
+                tag = f"[{where}]"
+                # New Rx (no bucket) uses a neutral slate; buckets use their colour.
+                tag_color = getattr(b, "color", None) or "#64748b"
+
+            # Item text is kept (for sizing / keyboard type-ahead); the delegate
+            # repaints tagged rows two-tone (bucket colour + blue filename).
+            display_name = prefix + d.filename
+            item = QListWidgetItem(((tag + "  ") if tag else "") + display_name)
             item.setData(Qt.ItemDataRole.UserRole, d.id)
+            if tag:
+                item.setData(_TAG_ROLE, tag)
+                item.setData(_TAGCOLOR_ROLE, tag_color)
+                item.setData(_NAME_ROLE, display_name)
             badge = quality_badge(d.ocr_quality) if d.ocr_done else "OCR pending…"
             tip = f"{d.status}  •  {badge}"
             if d.is_linked:
@@ -572,7 +670,7 @@ class TriageWidget(QWidget):
                 f"QPushButton:hover {{ background:#f8fafc; border-color:#cbd5e1;"
                 f" border-left:4px solid {b.color}; }}"
             )
-            btn.clicked.connect(lambda _=False, bucket=b: self._move_to(bucket))
+            btn.clicked.connect(lambda _=False, bucket=b: self._move_to(bucket, confirm=True))
             self.routing_layout.addWidget(btn)
         reopen = QPushButton("↩ Back to New Rx")
         reopen.setProperty("flat", True)
@@ -614,7 +712,7 @@ class TriageWidget(QWidget):
         elif isinstance(key, int):
             bucket = self.svc.store.get_bucket(key)
             if bucket:
-                self._move_to(bucket)
+                self._move_to(bucket, confirm=True)
 
     def _on_doc_changed(self, *_):
         item = self.doc_list.currentItem()
@@ -982,9 +1080,21 @@ class TriageWidget(QWidget):
         self.note_edit.clear()
         self._refresh_history()
 
-    def _move_to(self, bucket):
+    def _move_to(self, bucket, confirm: bool = False):
         if not self._current_doc:
             return
+        # Manual moves (clicking a bucket button or dragging a document) confirm
+        # first; automatic moves pass confirm=False.
+        if confirm:
+            doc_name = getattr(self._current_doc, "filename", "this document")
+            bucket_name = getattr(bucket, "name", "the bucket")
+            if QMessageBox.question(
+                self, "Move Document",
+                f"Move “{doc_name}” to “{bucket_name}”?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            ) != QMessageBox.StandardButton.Yes:
+                return
         self.viewer.release()  # free the file handle so the move can succeed
         self._current_doc = self.svc.move_to_bucket(self._current_doc, bucket)
         self.refresh(keep_selection=True)
