@@ -30,6 +30,22 @@ from dmelogic.config import debug_log
 from dmelogic.printing.fax_cover import generate_fax_cover_page
 
 
+def _clean_fax_number(value: str) -> str:
+    """
+    Tidy a fax number pulled from a contact record.
+
+    Numbers get typed with labels or stray punctuation ("Fax: 718-555-1212"),
+    which would be dialled literally. Keep only the dialable characters.
+    """
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if ":" in text:                      # drop a "Fax:"-style prefix
+        text = text.split(":", 1)[1]
+    allowed = "0123456789()-+ ."
+    return "".join(ch for ch in text if ch in allowed).strip(" .-")
+
+
 def format_phone_number(phone: str) -> str:
     """Format phone number for display."""
     # Remove non-digits
@@ -296,10 +312,130 @@ class SendFaxDialog(QDialog):
         self.setWindowTitle("Send Fax")
         self.setMinimumSize(500, 400)
         self._setup_ui()
-        
+
         if to_number:
             self.to_edit.setText(to_number)
-    
+
+    # ---------------- recipient picker ----------------
+
+    def _populate_contact_picker(self):
+        """Fill the category dropdown and wire the picker."""
+        try:
+            from dmelogic.fax_contacts import CATEGORY_OPTIONS
+            self.contact_category_combo.addItem("— pick a saved contact —", None)
+            for code, label in CATEGORY_OPTIONS:
+                self.contact_category_combo.addItem(label, code)
+            self.contact_category_combo.currentIndexChanged.connect(self._on_contact_category_changed)
+            self.contact_combo.currentIndexChanged.connect(self._on_contact_changed)
+            self.contact_location_combo.currentIndexChanged.connect(self._on_contact_location_changed)
+            self.contact_combo.setEnabled(False)
+            self.contact_location_combo.setEnabled(False)
+            self.contact_combo.addItem("(choose a type first)", None)
+            self.contact_location_combo.addItem("(choose a contact first)", None)
+        except Exception as e:
+            # The picker is a convenience; typing a number by hand must still work.
+            print(f"[fax] contact picker unavailable: {e}")
+
+    def _on_contact_category_changed(self):
+        category = self.contact_category_combo.currentData()
+        self.contact_combo.blockSignals(True)
+        self.contact_combo.clear()
+        self.contact_location_combo.clear()
+        self.contact_location_combo.setEnabled(False)
+        self.contact_location_combo.addItem("(choose a contact first)", None)
+        if not category:
+            self.contact_combo.addItem("(choose a type first)", None)
+            self.contact_combo.setEnabled(False)
+            self.contact_combo.blockSignals(False)
+            return
+        try:
+            from dmelogic.db.fax_contact_locations import fetch_contacts_by_category
+            rows = fetch_contacts_by_category(category)
+            self.contact_combo.addItem(f"— select — ({len(rows)})", None)
+            for r in rows:
+                name = (r["display_name"] or "").strip() or " ".join(
+                    x for x in ((r["last_name"] or ""), (r["first_name"] or "")) if x
+                ).strip()
+                self.contact_combo.addItem(name or f"Contact {r['id']}", int(r["id"]))
+            self.contact_combo.setEnabled(True)
+        except Exception as e:
+            print(f"[fax] could not load contacts: {e}")
+        self.contact_combo.blockSignals(False)
+
+    def _on_contact_changed(self):
+        contact_id = self.contact_combo.currentData()
+        self.contact_location_combo.blockSignals(True)
+        self.contact_location_combo.clear()
+        if not contact_id:
+            self.contact_location_combo.addItem("(choose a contact first)", None)
+            self.contact_location_combo.setEnabled(False)
+            self.contact_location_combo.blockSignals(False)
+            return
+        try:
+            from dmelogic.db.fax_contact_locations import fetch_locations
+            locs = fetch_locations(int(contact_id))
+            for l in locs:
+                label = (l["facility_name"] or "").strip() or (l["city"] or "") or f"Location {l['id']}"
+                if l["is_primary"]:
+                    label = f"★ {label}"
+                if l["fax"]:
+                    label = f"{label} — {l['fax']}"
+                self.contact_location_combo.addItem(label, int(l["id"]))
+            self.contact_location_combo.setEnabled(bool(locs))
+        except Exception as e:
+            print(f"[fax] could not load locations: {e}")
+        self.contact_location_combo.blockSignals(False)
+        # Auto-apply the primary (first) location.
+        if self.contact_location_combo.count():
+            self.contact_location_combo.setCurrentIndex(0)
+            self._on_contact_location_changed()
+
+    def _on_contact_location_changed(self):
+        """Fill the fax number, cover-page name and default message."""
+        location_id = self.contact_location_combo.currentData()
+        contact_id = self.contact_combo.currentData()
+        if not location_id or not contact_id:
+            return
+        try:
+            from dmelogic.db.fax_contact_locations import fetch_locations, get_contact
+            loc = next((l for l in fetch_locations(int(contact_id))
+                        if int(l["id"]) == int(location_id)), None)
+            if loc is None:
+                return
+            # Always replace the number, even when the chosen location has no
+            # fax on file — otherwise the previous contact's number would linger
+            # and the fax could go to the wrong recipient.
+            self.to_edit.setText(_clean_fax_number(loc["fax"] or ""))
+
+            contact = get_contact(int(contact_id))
+            if contact is None:
+                return
+            keys = contact.keys()
+            name = (contact["display_name"] or "").strip() or (contact["last_name"] or "")
+            facility = (loc["facility_name"] or "").strip()
+            self.recipient_name = f"{name} — {facility}" if facility and facility != name else name
+
+            # Named person goes in Attention (never clobbering what was typed).
+            person = (contact["contact_person"] or "").strip() if "contact_person" in keys else ""
+            if person and hasattr(self, "attention_edit") and not self.attention_edit.text().strip():
+                ext = (contact["contact_extension"] or "").strip() if "contact_extension" in keys else ""
+                self.attention_edit.setText(f"{person} (ext {ext})" if ext else person)
+
+            # The contact's message replaces the dialog's own generic default,
+            # but never anything the user has actually written.
+            msg = (contact["default_cover_message"] or "").strip() if "default_cover_message" in keys else ""
+            if msg and hasattr(self, "cover_body_edit"):
+                current = self.cover_body_edit.toPlainText().strip()
+                replaceable = (not current) or current == (self._default_cover_body() or "").strip() \
+                    or current in getattr(self, "_applied_cover_messages", set())
+                if replaceable:
+                    self.cover_body_edit.setPlainText(msg)
+                    if not hasattr(self, "_applied_cover_messages"):
+                        self._applied_cover_messages = set()
+                    self._applied_cover_messages.add(msg)
+        except Exception as e:
+            print(f"[fax] could not apply location: {e}")
+
     def _setup_ui(self):
         """Build the dialog UI."""
         layout = QVBoxLayout(self)
@@ -312,13 +448,31 @@ class SendFaxDialog(QDialog):
         
         # Form
         form_layout = QFormLayout()
-        
+
+        # Recipient picker — choose a saved contact (MD office, another DME, an
+        # Ins/MLTC) and then which of its locations to fax. Selecting a location
+        # fills in the number, the cover-page name, and any default message, so
+        # numbers don't have to be looked up by hand.
+        picker_row = QHBoxLayout()
+        self.contact_category_combo = QComboBox()
+        self.contact_category_combo.setMinimumWidth(150)
+        self.contact_combo = QComboBox()
+        self.contact_combo.setMinimumWidth(220)
+        self.contact_location_combo = QComboBox()
+        self.contact_location_combo.setMinimumWidth(200)
+        picker_row.addWidget(self.contact_category_combo)
+        picker_row.addWidget(self.contact_combo, 1)
+        picker_row.addWidget(self.contact_location_combo, 1)
+        form_layout.addRow("Recipient:", picker_row)
+
         # To number
         self.to_edit = QLineEdit()
         self.to_edit.setPlaceholderText("Enter recipient fax number")
         form_layout.addRow("Fax Number:", self.to_edit)
-        
+
         layout.addLayout(form_layout)
+
+        self._populate_contact_picker()
         
         # Document selection
         doc_group = QGroupBox("Document to Fax")
